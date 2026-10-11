@@ -201,9 +201,11 @@ class _HistoryPageState extends State<HistoryPage> {
                   selectedComics.clear();
                 });
 
-                for (final comic in comicsToDelete) {
-                  _removeHistory(comic);
-                }
+                HistoryManager().batchDeleteHistories(
+                  comicsToDelete
+                      .map((comic) => ComicID(comic.type, comic.id))
+                      .toList(),
+                );
               },
       ),
     ];

@@ -120,6 +120,9 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
   }
 
   List<FavoriteItem> filterComics(List<FavoriteItem> curComics) {
+    if (readFilterSelect != "UnCompleted" && readFilterSelect != "Completed") {
+      return curComics;
+    }
     return curComics.where((comic) {
       var history =
           HistoryManager().find(comic.id, ComicType(comic.sourceKey.hashCode));
