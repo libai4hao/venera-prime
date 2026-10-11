@@ -2,7 +2,7 @@ name: venera
 description: "A comic app."
 publish_to: 'none'
 
-version: 2.4.5+245
+version: 2.4.6+246
 
 environment:
   sdk: '>=3.8.0 <4.0.0'
@@ -88,6 +88,8 @@ dependencies:
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.2.0
   archive: ^4.0.7
+  avif_native:
+    path: packages/avif_native
 
 dev_dependencies:
   integration_test:

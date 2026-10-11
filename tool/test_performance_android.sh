@@ -13,7 +13,11 @@ aapt="${AAPT:-aapt}"
 device="$1"
 normal_package='com.github.wgh136.venera.prime'
 test_package="${normal_package}.integrationtest"
-target='integration_test/performance_audit_test.dart'
+target="${INTEGRATION_TEST_TARGET:-integration_test/performance_audit_test.dart}"
+if [[ "$target" != integration_test/*_test.dart || ! -f "$target" ]]; then
+  printf 'Target must be an existing integration_test/*_test.dart file.\n' >&2
+  exit 2
+fi
 
 mkdir -p .dart_tool/performance-audit
 run_dir="$(mktemp -d "$PWD/.dart_tool/performance-audit/run.XXXXXXXX")"
