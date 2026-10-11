@@ -597,9 +597,9 @@ class _GalleryModeState extends State<_GalleryMode>
         keyRepeatTimer = null;
       }
       if (forward == true) {
-        reader.toPage(reader.page + 1);
+        reader.turnPage(forward: true);
       } else if (forward == false) {
-        reader.toPage(reader.page - 1);
+        reader.turnPage(forward: false);
       }
     }
     if (event is KeyRepeatEvent && keyRepeatTimer == null) {
@@ -612,9 +612,9 @@ class _GalleryModeState extends State<_GalleryMode>
             timer.cancel();
             return;
           } else if (forward == true) {
-            reader.toPage(reader.page + 1);
+            reader.turnPage(forward: true);
           } else if (forward == false) {
-            reader.toPage(reader.page - 1);
+            reader.turnPage(forward: false);
           }
         },
       );
@@ -697,6 +697,25 @@ class _ContinuousModeState extends State<_ContinuousMode>
   ScrollController? _scrollController;
 
   ScrollController get scrollController => _scrollController!;
+
+  bool get isAtChapterStart =>
+      _visibleImagesReady &&
+      _scrollController?.hasClients == true &&
+      scrollController.position.pixels <=
+          scrollController.position.minScrollExtent + 0.5;
+
+  bool get isAtChapterEnd =>
+      _visibleImagesReady &&
+      _scrollController?.hasClients == true &&
+      scrollController.position.pixels >=
+          scrollController.position.maxScrollExtent - 0.5;
+
+  bool get _visibleImagesReady =>
+      imageStates.isNotEmpty &&
+      imageStates.every(
+        (state) => state is _ComicImageState &&
+            (state._imageInfo != null || state._lastException != null),
+      );
 
   var isCTRLPressed = false;
   static var _isMouseScrolling = false;

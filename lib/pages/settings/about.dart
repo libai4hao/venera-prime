@@ -55,9 +55,11 @@ class _AboutSettingsState extends State<AboutSettings> {
                 isCheckingUpdate = true;
               });
               checkUpdateUi().then((value) {
-                setState(() {
-                  isCheckingUpdate = false;
-                });
+                if (mounted) {
+                  setState(() {
+                    isCheckingUpdate = false;
+                  });
+                }
               });
             },
           ).fixHeight(32),
@@ -85,20 +87,6 @@ class _AboutSettingsState extends State<AboutSettings> {
   }
 }
 
-class LatestRelease {
-  final String version;
-  final String title;
-  final String body;
-  final String url;
-
-  const LatestRelease({
-    required this.version,
-    required this.title,
-    required this.body,
-    required this.url,
-  });
-}
-
 Future<LatestRelease?> checkUpdate() async {
   const url =
       "https://api.github.com/repos/venera-app/venera-prime/releases/latest";
@@ -112,85 +100,37 @@ Future<LatestRelease?> checkUpdate() async {
   if (res.statusCode != 200 || res.data == null) {
     return null;
   }
-  final data = res.data!;
-  final tag = data["tag_name"]?.toString();
-  if (tag == null || tag.isEmpty) {
-    return null;
-  }
-  final version = tag.replaceFirst(RegExp(r"^[vV]"), '').split('+').first;
-  return LatestRelease(
-    version: version,
-    title: data["name"]?.toString().trim().isNotEmpty == true
-        ? data["name"].toString()
-        : tag,
-    body: data["body"]?.toString().trim() ?? '',
-    url:
-        data["html_url"]?.toString() ??
-        "https://github.com/venera-app/venera-prime/releases/latest",
-  );
+  return LatestRelease.fromJson(res.data!);
 }
+
+bool _appUpdateDialogOpen = false;
 
 Future<void> checkUpdateUi([
   bool showMessageIfNoUpdate = true,
   bool delay = false,
 ]) async {
+  if (_appUpdateDialogOpen) return;
+  _appUpdateDialogOpen = true;
   try {
     var release = await checkUpdate();
-    if (release != null && _compareVersion(release.version, App.version)) {
+    if (release != null && isNewerAppVersion(release.version, App.version)) {
       if (delay) {
         await Future.delayed(const Duration(seconds: 2));
       }
-      showDialog(
+      await showDialog<void>(
         context: App.rootContext,
-        builder: (context) {
-          return ContentDialog(
-            title: "${release.title} (${release.version})",
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    "A new version is available. Do you want to update now?".tl,
-                  ),
-                  if (release.body.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Text(release.body),
-                  ],
-                ],
-              ).paddingHorizontal(16),
-            ),
-            actions: [
-              Button.text(
-                onPressed: () {
-                  Navigator.pop(context);
-                  launchUrlString(release.url);
-                },
-                child: Text("Update".tl),
-              ),
-            ],
-          );
-        },
+        barrierDismissible: false,
+        builder: (_) => _AppUpdateDialog(release: release),
       );
     } else if (showMessageIfNoUpdate) {
       App.rootContext.showMessage(message: "No new version available".tl);
     }
   } catch (e, s) {
     Log.error("Check Update", e.toString(), s);
-  }
-}
-
-/// return true if version1 > version2
-bool _compareVersion(String version1, String version2) {
-  var v1 = version1.split(".");
-  var v2 = version2.split(".");
-  for (var i = 0; i < v1.length; i++) {
-    if (int.parse(v1[i]) > int.parse(v2[i])) {
-      return true;
+    if (showMessageIfNoUpdate) {
+      App.rootContext.showMessage(message: "Failed to check for updates".tl);
     }
-    if (int.parse(v1[i]) < int.parse(v2[i])) {
-      return false;
-    }
+  } finally {
+    _appUpdateDialogOpen = false;
   }
-  return false;
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 import 'package:flutter/material.dart';
@@ -7,6 +8,8 @@ import 'package:venera/components/components.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
+import 'package:venera/foundation/comic_source/availability.dart';
+import 'package:venera/foundation/image_provider/reader_image.dart';
 import 'package:venera/foundation/comic_source/source_library.dart';
 import 'package:venera/foundation/log.dart';
 import 'package:venera/network/app_dio.dart';
@@ -17,6 +20,8 @@ import 'package:venera/utils/ext.dart';
 import 'package:venera/utils/io.dart';
 import 'package:venera/utils/atomic_file.dart';
 import 'package:venera/utils/translations.dart';
+
+part 'source_check.dart';
 
 typedef _CatalogSource = ({String version, String? url, String? fileName});
 
@@ -148,6 +153,7 @@ class ComicSourcePage extends StatelessWidget {
       );
       currentParser.registerParsedSource();
       manager.replace(candidate);
+      unawaited(SourceCheckManager.instance.check(candidate));
       manager.setUpdateUrl(source.key, downloadUrl);
       manager.removeAvailableUpdate(source.key);
       manager.setUpdateState(source.key, ComicSourceUpdateState.success);
@@ -447,6 +453,7 @@ class _BodyState extends State<_Body> {
         var file = File(source.filePath);
         file.delete();
         ComicSourceManager().remove(source.key);
+        SourceCheckManager.instance.clear(source.key);
         _validatePages();
         App.forceRebuild();
       },
@@ -631,6 +638,7 @@ class _BodyState extends State<_Body> {
       sourceFileName: fileName,
     );
     _addAllPagesWithComicSource(comicSource);
+    unawaited(SourceCheckManager.instance.check(comicSource));
     appdata.saveData();
     App.forceRebuild();
   }
@@ -668,6 +676,7 @@ Future<void> _installSourceFromLibrary(String url, String libraryId) async {
       sourceFileName: fileName,
     );
     _addAllPagesWithComicSource(source);
+    unawaited(SourceCheckManager.instance.check(source));
     await appdata.saveData();
     App.forceRebuild();
   } catch (e, s) {
@@ -1494,6 +1503,7 @@ class _SliverComicSourceState extends State<_SliverComicSource> {
         SliverToBoxAdapter(
           child: Column(children: buildSourceSettings().toList()),
         ),
+        SliverToBoxAdapter(child: _SourceCheckTile(source: source)),
         SliverToBoxAdapter(child: Column(children: _buildAccount().toList())),
       ],
     );

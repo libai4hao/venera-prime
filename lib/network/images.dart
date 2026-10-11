@@ -149,6 +149,7 @@ abstract class ImageDownloader {
     String cid,
     String eid, {
     bool cacheResult = true,
+    bool useCache = true,
   }) {
     return _loadComicImage(
       imageKey,
@@ -156,6 +157,7 @@ abstract class ImageDownloader {
       cid,
       eid,
       cacheResult: cacheResult,
+      useCache: useCache,
     );
   }
 
@@ -165,9 +167,10 @@ abstract class ImageDownloader {
     String cid,
     String eid, {
     bool cacheResult = true,
+    bool useCache = true,
   }) async* {
     final cacheKey = "$imageKey@$sourceKey@$cid@$eid";
-    final cache = await CacheManager().findCache(cacheKey);
+    final cache = useCache ? await CacheManager().findCache(cacheKey) : null;
 
     if (cache != null) {
       var data = await cache.readAsBytes();
