@@ -30,11 +30,165 @@ void main() {
   setUpAll(ensureTestTranslations);
   setUp(() {
     for (final task in BackgroundTasks.instance.tasks) {
+      task.setPresentation(pinned: false, needsAttention: false);
       task.finish();
     }
     BackgroundTasks.instance.clearFinished();
     BackgroundTasks.instance.configure(history: {});
   });
+
+  testWidgets('attention breathes only while visible and preserves app state', (
+    tester,
+  ) async {
+    final visible = ValueNotifier(true);
+    addTearDown(visible.dispose);
+    var inits = 0;
+    final task = BackgroundTasks.instance.start(
+      'ready-pulse',
+      'Ready',
+      pinned: true,
+    )..finish();
+    final running = BackgroundTasks.instance.start('active-pulse', 'Working');
+    final opacity = find.byKey(const Key('background-task-badge-opacity'));
+    double value() => tester.widget<Opacity>(opacity).opacity;
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => ValueListenableBuilder<bool>(
+          valueListenable: visible,
+          child: child,
+          builder: (context, enabled, child) =>
+              BackgroundTaskOverlay(enabled: enabled, child: child!),
+        ),
+        home: _PreservedChild(() => inits++),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(value(), .55);
+    task.setPresentation(needsAttention: true);
+    await tester.pump();
+    final first = value();
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(value(), greaterThan(first));
+    expect(value(), inInclusiveRange(.35, .85));
+    expect(tester.binding.transientCallbackCount, greaterThan(0));
+
+    visible.value = false;
+    await tester.pumpAndSettle();
+    expect(opacity, findsNothing);
+    expect(tester.binding.transientCallbackCount, 0);
+    expect(running.isRunning, isTrue);
+    expect(running.cancelRequested, isFalse);
+    visible.value = true;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(tester.binding.transientCallbackCount, greaterThan(0));
+    expect(inits, 1);
+
+    task.setPresentation(needsAttention: false);
+    await tester.pumpAndSettle();
+    expect(value(), .55);
+    expect(tester.binding.transientCallbackCount, 0);
+    running.finish();
+    await tester.pumpAndSettle();
+    expect(value(), .25);
+    task.setPresentation(needsAttention: true);
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox());
+    expect(tester.binding.transientCallbackCount, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reduced motion uses a static attention highlight', (
+    tester,
+  ) async {
+    final task = BackgroundTasks.instance.start(
+      'static-ready',
+      'Ready',
+      pinned: true,
+    )..finish();
+    task.setPresentation(needsAttention: true);
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: BackgroundTaskOverlay(child: child!),
+        ),
+        home: const Scaffold(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<Opacity>(
+            find.byKey(const Key('background-task-badge-opacity')),
+          )
+          .opacity,
+      .85,
+    );
+    expect(tester.binding.transientCallbackCount, 0);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'ready task opens installation directly while normal tasks show details',
+    (tester) async {
+      var installs = 0;
+      final task =
+          BackgroundTasks.instance.start(
+              'ready-open',
+              'Update ready',
+              pinned: true,
+            )
+            ..onOpenResult = () {
+              installs++;
+            }
+            ..resultLabel = 'Install'
+            ..finish();
+      task.setPresentation(needsAttention: true);
+      final running = BackgroundTasks.instance.start(
+        'ordinary-open',
+        'Ordinary job',
+      );
+      running.update(completed: 0, total: 1);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showBackgroundTasks(context),
+                child: const Text('Open tasks'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open tasks'));
+      await tester.pumpAndSettle();
+      expect(find.text('Install'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Update ready')).dy,
+        lessThan(tester.getTopLeft(find.text('Ordinary job')).dy),
+      );
+      await tester.tap(find.text('Update ready'));
+      await tester.pumpAndSettle();
+      expect(installs, 1);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('Install'), findsNothing);
+
+      await tester.tap(find.text('Open tasks'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ordinary job'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(installs, 1);
+      await tester.tap(find.byKey(const Key('background-task-continue')));
+      await tester.pumpAndSettle();
+      expect(running.isRunning, isTrue);
+      expect(running.cancelRequested, isFalse);
+      running.finish();
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
   testWidgets(
     'root builder badge opens center and does not replace content when hidden',
     (tester) async {

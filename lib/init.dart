@@ -8,6 +8,7 @@ import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/cache_manager.dart';
 import 'package:venera/foundation/cache_maintenance_service.dart';
 import 'package:venera/foundation/background_tasks.dart';
+import 'package:venera/foundation/app_update_service.dart';
 import 'package:venera/foundation/update_schedule.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
 import 'package:venera/foundation/comic_source/source_library.dart';
@@ -110,6 +111,7 @@ Future<InitializationFailure?> init() async {
     }),
   );
   if (App.isAndroid) {
+    unawaited(AppUpdateService.instance.restore());
     handleLinks();
     handleTextShare();
     try {

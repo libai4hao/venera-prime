@@ -84,20 +84,6 @@ class _AboutSettingsState extends State<AboutSettings> {
   }
 }
 
-class LatestRelease {
-  final String version;
-  final String title;
-  final String body;
-  final String url;
-
-  const LatestRelease({
-    required this.version,
-    required this.title,
-    required this.body,
-    required this.url,
-  });
-}
-
 Future<LatestRelease?> checkUpdate() async {
   const url =
       "https://api.github.com/repos/venera-app/venera-prime/releases/latest";
@@ -111,22 +97,7 @@ Future<LatestRelease?> checkUpdate() async {
   if (res.statusCode != 200 || res.data == null) {
     throw StateError('Release request failed: ${res.statusCode}');
   }
-  final data = res.data!;
-  final tag = data["tag_name"]?.toString();
-  if (tag == null || tag.isEmpty) {
-    throw const FormatException('Release response is missing a version');
-  }
-  final version = tag.replaceFirst(RegExp(r"^[vV]"), '').split('+').first;
-  return LatestRelease(
-    version: version,
-    title: data["name"]?.toString().trim().isNotEmpty == true
-        ? data["name"].toString()
-        : tag,
-    body: data["body"]?.toString().trim() ?? '',
-    url:
-        data["html_url"]?.toString() ??
-        "https://github.com/venera-app/venera-prime/releases/latest",
-  );
+  return LatestRelease.fromJson(res.data!);
 }
 
 Future<LatestRelease?> startAppUpdateCheck({
@@ -139,7 +110,7 @@ Future<LatestRelease?> startAppUpdateCheck({
     if (release == null) {
       throw const FormatException('Invalid release response');
     }
-    if (_compareVersion(release.version, App.version)) {
+    if (isNewerAppVersion(release.version, App.version)) {
       task.update(message: '${release.title} (${release.version})');
       task.resultLabel = "View update".tl;
       task.onOpenResult = () => showAppUpdateDialog(release);
@@ -150,35 +121,19 @@ Future<LatestRelease?> startAppUpdateCheck({
   },
 );
 
-void showAppUpdateDialog(LatestRelease release) {
-  showDialog<void>(
-    context: App.rootContext,
-    builder: (context) => ContentDialog(
-      title: '${release.title} (${release.version})',
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text("A new version is available. Do you want to update now?".tl),
-            if (release.body.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(release.body),
-            ],
-          ],
-        ).paddingHorizontal(16),
-      ),
-      actions: [
-        Button.text(
-          onPressed: () {
-            Navigator.pop(context);
-            launchUrlString(release.url);
-          },
-          child: Text("Update".tl),
-        ),
-      ],
-    ),
-  );
+bool _appUpdateDialogOpen = false;
+
+Future<void> showAppUpdateDialog(LatestRelease release) async {
+  if (_appUpdateDialogOpen) return;
+  _appUpdateDialogOpen = true;
+  try {
+    await showDialog<void>(
+      context: App.rootContext,
+      builder: (_) => _AppUpdateDialog(release: release),
+    );
+  } finally {
+    _appUpdateDialogOpen = false;
+  }
 }
 
 Future<void> checkUpdateUi([
@@ -201,26 +156,11 @@ Future<void> checkUpdateUi([
     // their result in the task dialog/center even when the page is closed.
     if (!showMessageIfNoUpdate &&
         release != null &&
-        _compareVersion(release.version, App.version)) {
+        isNewerAppVersion(release.version, App.version)) {
       if (delay) await Future<void>.delayed(const Duration(seconds: 2));
       showAppUpdateDialog(release);
     }
   } catch (error, stack) {
     Log.error('Check Update', error, stack);
   }
-}
-
-/// return true if version1 > version2
-bool _compareVersion(String version1, String version2) {
-  var v1 = version1.split(".");
-  var v2 = version2.split(".");
-  for (var i = 0; i < v1.length; i++) {
-    if (int.parse(v1[i]) > int.parse(v2[i])) {
-      return true;
-    }
-    if (int.parse(v1[i]) < int.parse(v2[i])) {
-      return false;
-    }
-  }
-  return false;
 }

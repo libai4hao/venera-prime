@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'package:venera/components/components.dart';
 import 'package:venera/components/background_tasks.dart';
 import 'package:venera/components/window_frame.dart';
@@ -36,12 +37,14 @@ class _Source implements ComicSource {
   Completer<void>? gate;
   final started = Completer<void>();
   String cover = '';
+  String? errorMessage;
 
   @override
   LoadComicFunc get loadComicInfo => (id) async {
     calls++;
     if (!started.isCompleted) started.complete();
     await gate?.future;
+    if (errorMessage != null) return Res.error(errorMessage!);
     return Res(
       ComicDetails.fromJson({
         'title': 'Follow update fixture',
@@ -327,6 +330,142 @@ void registerFollowUpdatesTests() {
   });
 
   testWidgets(
+    '429 attempts persist without consuming the first successful baseline',
+    (tester) async {
+      await setup(tester);
+      try {
+        source.errorMessage = 'Invalid Status Code 429: Too many requests';
+        expect((await check(tester, baseline: true)).errors, 1);
+        expect(source.calls, 1);
+        var saved = manager.getComicsWithUpdatesInfo(folder).single;
+        expect(saved.lastAttemptTime, isNotNull);
+        expect(saved.lastCheckTime, isNull);
+        expect(saved.updateTime, '2026-10-6');
+        manager.close();
+        await tester.runAsync(() => manager.init());
+        saved = manager.getComicsWithUpdatesInfo(folder).single;
+        expect(saved.lastAttemptTime, isNotNull);
+        final skipped = (await tester.runAsync(
+          () => updateFolder(folder, false).toList(),
+        ))!.last;
+        expect(skipped.total, 0);
+        expect(source.calls, 1);
+        // A forced retry remains possible and still establishes a silent baseline.
+        source.errorMessage = null;
+        expect((await check(tester, baseline: true)).updated, 0);
+        saved = manager.getComicsWithUpdatesInfo(folder).single;
+        expect(saved.lastCheckTime, isNotNull);
+        expect(saved.lastAttemptTime, isNull);
+        source.chapterIds.add('later-chapter');
+        expect((await check(tester, baseline: true)).updated, 1);
+        // A failed recheck must preserve both the chapter baseline and unread flag.
+        source.errorMessage = 'HTTP 429';
+        expect((await check(tester)).errors, 1);
+        expect(manager.countUpdates(folder), 1);
+        source.errorMessage = null;
+        expect((await check(tester)).updated, 0);
+        expect(manager.countUpdates(folder), 1);
+      } finally {
+        await cleanup(tester);
+      }
+    },
+  );
+
+  testWidgets(
+    'old follow schema migrates and expired failures retry automatically',
+    (tester) async {
+      await setup(tester);
+      try {
+        expect((await check(tester, baseline: true)).updated, 0);
+        final baseline = manager.getComicsWithUpdatesInfo(folder).single;
+        manager.close();
+        final db = sqlite3.open('${root.path}/local_favorite.db');
+        try {
+          db.execute('ALTER TABLE "$folder" DROP COLUMN last_attempt_time;');
+        } finally {
+          db.dispose();
+        }
+        await tester.runAsync(() => manager.init());
+        var restored = manager.getComicsWithUpdatesInfo(folder).single;
+        expect(restored.lastCheckTime, baseline.lastCheckTime);
+        expect(restored.lastAttemptTime, isNull);
+        source.errorMessage = 'HTTP 429';
+        await check(tester);
+        manager.close();
+        final expired = sqlite3.open('${root.path}/local_favorite.db');
+        try {
+          expired.execute(
+            'UPDATE "$folder" SET last_check_time = ?, last_attempt_time = ?;',
+            [0, 1],
+          );
+        } finally {
+          expired.dispose();
+        }
+        await tester.runAsync(() => manager.init());
+        source.errorMessage = null;
+        source.chapterIds.add('after-cooldown');
+        final result = (await tester.runAsync(
+          () => updateFolder(folder, false).toList(),
+        ))!.last;
+        expect(result.updated, 1);
+        restored = manager.getComicsWithUpdatesInfo(folder).single;
+        expect(restored.lastAttemptTime, isNull);
+        expect(restored.lastCheckTime, isNotNull);
+      } finally {
+        await cleanup(tester);
+      }
+    },
+  );
+
+  testWidgets('429 pauses only its source for the remainder of a batch', (
+    tester,
+  ) async {
+    await setup(tester);
+    try {
+      source.errorMessage = 'HTTP 429';
+      for (var i = 2; i <= 8; i++) {
+        manager.addComic(
+          folder,
+          FavoriteItem(
+            id: '$i',
+            name: 'Limited $i',
+            coverPath: '',
+            author: '',
+            type: ComicType.fromKey(source.key),
+            tags: [],
+          ),
+        );
+      }
+      final healthy = _Source('healthy-source');
+      ComicSourceManager().add(healthy);
+      manager.addComic(
+        folder,
+        FavoriteItem(
+          id: 'healthy',
+          name: 'Healthy',
+          coverPath: '',
+          author: '',
+          type: ComicType.fromKey(healthy.key),
+          tags: [],
+        ),
+      );
+      final result = await check(tester);
+      expect(result.errors, 8);
+      expect(source.calls, lessThanOrEqualTo(5));
+      expect(healthy.calls, 1);
+      expect(
+        manager
+            .getComicsWithUpdatesInfo(folder)
+            .where((c) => c.type == ComicType.fromKey(source.key))
+            .every((c) => c.lastAttemptTime != null && c.lastCheckTime == null),
+        isTrue,
+      );
+    } finally {
+      await cleanup(tester);
+    }
+  });
+
+  testWidgets(
     'follow update task-center cancellation waits for pending requests',
     (tester) async {
       await setup(tester);
@@ -472,6 +611,7 @@ void registerFollowUpdatesTests() {
     (tester) async {
       await setup(tester);
       try {
+        source.errorMessage = 'HTTP 429';
         var canceled = false;
         final events = (await tester.runAsync(() async {
           source.gate = Completer<void>();
@@ -491,6 +631,10 @@ void registerFollowUpdatesTests() {
           BackgroundTaskStatus.cancelled,
         );
         expect(manager.countUpdates(folder), 0);
+        expect(
+          manager.getComicsWithUpdatesInfo(folder).single.lastAttemptTime,
+          isNull,
+        );
         expect(
           manager.getComicsWithUpdatesInfo(folder).single.updateTime,
           '2026-10-6',

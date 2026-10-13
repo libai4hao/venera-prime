@@ -179,6 +179,10 @@ Future<void> showBackgroundTasks(
                       itemCount: tasks.length,
                       itemBuilder: (context, i) {
                         final task = tasks[i];
+                        final openResult =
+                            task.pinned &&
+                            task.status == BackgroundTaskStatus.completed &&
+                            task.onOpenResult != null;
                         return ListTile(
                           leading: Icon(
                             task.isRunning
@@ -196,10 +200,18 @@ Future<void> showBackgroundTasks(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${_status(task)}${task.total == null ? '' : '  ${task.completed}/${task.total}'}',
+                                openResult
+                                    ? (task.resultLabel ?? 'View result').tl
+                                    : '${_status(task)}${task.total == null ? '' : '  ${task.completed}/${task.total}'}',
                               ),
                               if (task.isRunning)
                                 LinearProgressIndicator(value: task.progress),
+                              if (task.message.isNotEmpty)
+                                Text(
+                                  task.message.tl,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               if (task.errors.isNotEmpty)
                                 Text(
                                   'Errors: @count'.tlParams({
@@ -208,7 +220,22 @@ Future<void> showBackgroundTasks(
                                 ),
                             ],
                           ),
-                          onTap: () => showBackgroundTask(context, task),
+                          trailing: openResult
+                              ? IconButton(
+                                  tooltip: 'View task'.tl,
+                                  icon: const Icon(Icons.info_outline),
+                                  onPressed: () =>
+                                      showBackgroundTask(context, task),
+                                )
+                              : null,
+                          onTap: () {
+                            if (openResult) {
+                              Navigator.of(context).pop();
+                              task.onOpenResult?.call();
+                            } else {
+                              showBackgroundTask(context, task);
+                            }
+                          },
                         );
                       },
                     ),
@@ -352,8 +379,8 @@ class _BackgroundTaskOverlayState extends State<BackgroundTaskOverlay> {
                   return Semantics(
                     label: 'Background tasks'.tl,
                     button: true,
-                    child: Opacity(
-                      opacity: _drag != null
+                    child: _TaskBadgeOpacity(
+                      restingOpacity: _drag != null
                           ? .95
                           : count == 0
                           ? .25
@@ -413,5 +440,80 @@ class _BackgroundTaskOverlayState extends State<BackgroundTaskOverlay> {
         ],
       );
     },
+  );
+}
+
+/// Keep progress and attention animations confined to the badge subtree.
+class _TaskBadgeOpacity extends StatefulWidget {
+  const _TaskBadgeOpacity({required this.restingOpacity, required this.child});
+
+  final double restingOpacity;
+  final Widget child;
+
+  @override
+  State<_TaskBadgeOpacity> createState() => _TaskBadgeOpacityState();
+}
+
+class _TaskBadgeOpacityState extends State<_TaskBadgeOpacity>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+  bool _disableAnimations = false;
+  bool _tickerEnabled = true;
+
+  ValueNotifier<bool> get _attention =>
+      BackgroundTasks.instance.needsAttentionListenable;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    _attention.addListener(_onAttentionChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _disableAnimations = MediaQuery.disableAnimationsOf(context);
+    _tickerEnabled = TickerMode.valuesOf(context).enabled;
+    _updateAnimation();
+  }
+
+  void _onAttentionChanged() {
+    _updateAnimation();
+    setState(() {});
+  }
+
+  void _updateAnimation() {
+    if (_attention.value && !_disableAnimations && _tickerEnabled) {
+      if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
+    } else {
+      _pulse.stop();
+      _pulse.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _attention.removeListener(_onAttentionChanged);
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _pulse,
+    child: widget.child,
+    builder: (context, child) => Opacity(
+      key: const Key('background-task-badge-opacity'),
+      opacity: !_attention.value
+          ? widget.restingOpacity
+          : _disableAnimations || !_tickerEnabled
+          ? .85
+          : .35 + .5 * Curves.easeInOut.transform(_pulse.value),
+      child: child,
+    ),
   );
 }

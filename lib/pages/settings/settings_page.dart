@@ -12,6 +12,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:venera/components/components.dart';
 import 'package:venera/foundation/app.dart';
+import 'package:venera/foundation/app_update.dart';
+import 'package:venera/foundation/app_update_service.dart';
 import 'package:venera/foundation/appdata.dart';
 import 'package:venera/foundation/cache_manager.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
@@ -30,6 +32,8 @@ import 'package:venera/utils/io.dart';
 import 'package:venera/utils/import_comic.dart';
 import 'package:venera/utils/translations.dart';
 
+export 'package:venera/foundation/app_update.dart' show LatestRelease;
+
 part 'reader.dart';
 part 'explore_settings.dart';
 part 'setting_components.dart';
@@ -37,6 +41,7 @@ part 'appearance.dart';
 part 'local_favorites.dart';
 part 'app.dart';
 part 'about.dart';
+part 'app_update_dialog.dart';
 part 'network.dart';
 part 'debug.dart';
 

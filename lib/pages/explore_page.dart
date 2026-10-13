@@ -37,18 +37,26 @@ class _ExplorePageState extends State<ExplorePage>
         .toList();
     explorePages = explorePages.where((e) => all.contains(e)).toList();
     if (!pages.isEqualTo(explorePages)) {
+      final selectedPage = pages.isEmpty ? null : pages[controller.index];
+      final selectedIndex = explorePages.indexOf(selectedPage ?? '');
+      controller.dispose();
       setState(() {
         pages = explorePages;
         controller = TabController(
           length: pages.length,
+          initialIndex: selectedIndex < 0 ? 0 : selectedIndex,
           vsync: this,
         );
       });
+    } else if (pages.isEmpty) {
+      // An installed source may have no enabled explore pages. Refresh the
+      // empty-state action as well when the source list finishes loading.
+      setState(() {});
     }
   }
 
   void onNaviItemTapped(int index) {
-    if (index == 2) {
+    if (index == 2 && pages.isNotEmpty) {
       int page = controller.index;
       String currentPageId = pages[page];
       GlobalState.find<_SingleExplorePageState>(currentPageId).toTop();
@@ -74,6 +82,9 @@ class _ExplorePageState extends State<ExplorePage>
       vsync: this,
     );
     appdata.settings.addListener(onSettingsChanged);
+    // Sources initialize in the background after the initial page is mounted.
+    // Their completion does not necessarily change the saved page settings.
+    ComicSourceManager().addListener(onSettingsChanged);
     NaviPane.of(context).addNaviItemTapListener(onNaviItemTapped);
     super.initState();
   }
@@ -89,6 +100,7 @@ class _ExplorePageState extends State<ExplorePage>
     controller.dispose();
     _showRefreshButton.dispose();
     appdata.settings.removeListener(onSettingsChanged);
+    ComicSourceManager().removeListener(onSettingsChanged);
     naviPane?.removeNaviItemTapListener(onNaviItemTapped);
     super.dispose();
   }

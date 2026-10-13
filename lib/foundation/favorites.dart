@@ -221,24 +221,31 @@ class FavoriteItemWithUpdateInfo extends FavoriteItem {
 
   DateTime? lastCheckTime;
 
+  /// Most recent failed attempt, separate from the successful baseline.
+  DateTime? lastAttemptTime;
+
   bool hasNewUpdate;
 
   FavoriteItemWithUpdateInfo(
     FavoriteItem item,
     this.updateTime,
     this.hasNewUpdate,
-    int? lastCheckTime,
-  ) : lastCheckTime = lastCheckTime == null
-          ? null
-          : DateTime.fromMillisecondsSinceEpoch(lastCheckTime),
-      super(
-        id: item.id,
-        name: item.name,
-        coverPath: item.coverPath,
-        author: item.author,
-        type: item.type,
-        tags: item.tags,
-      );
+    int? lastCheckTime, {
+    int? lastAttemptTime,
+  }) : lastCheckTime = lastCheckTime == null
+           ? null
+           : DateTime.fromMillisecondsSinceEpoch(lastCheckTime),
+       lastAttemptTime = lastAttemptTime == null
+           ? null
+           : DateTime.fromMillisecondsSinceEpoch(lastAttemptTime),
+       super(
+         id: item.id,
+         name: item.name,
+         coverPath: item.coverPath,
+         author: item.author,
+         type: item.type,
+         tags: item.tags,
+       );
 
   @override
   String get description {
@@ -1539,6 +1546,11 @@ class LocalFavoritesManager with ChangeNotifier {
         add column last_check_time int;
       """);
     }
+    if (!columns.any((element) => element['name'] == 'last_attempt_time')) {
+      _db.execute(
+        'ALTER TABLE $quotedTable ADD COLUMN last_attempt_time INTEGER;',
+      );
+    }
     if (!columns.any((element) => element['name'] == 'last_update_chapters')) {
       _db.execute(
         'ALTER TABLE $quotedTable ADD COLUMN last_update_chapters TEXT;',
@@ -1590,7 +1602,7 @@ class LocalFavoritesManager with ChangeNotifier {
       """
       update $table
       set last_update_time = ?, has_new_update = ?, last_check_time = ?,
-          last_update_chapters = ?
+          last_update_chapters = ?, last_attempt_time = NULL
       where id == ? and type == ?;
     """,
       [
@@ -1603,6 +1615,16 @@ class LocalFavoritesManager with ChangeNotifier {
       ],
     );
     return changed;
+  }
+
+  void recordFailedUpdateAttempt(String folder, String id, ComicType type) {
+    // The folder or favorite may have been removed while the request ran.
+    if (!existsFolder(folder)) return;
+    final table = _favoriteTable(folder);
+    _db.execute(
+      'UPDATE $table SET last_attempt_time = ? WHERE id == ? AND type == ?;',
+      [DateTime.now().millisecondsSinceEpoch, id, type.value],
+    );
   }
 
   void updateCheckTime(String folder, String id, ComicType type) {
@@ -1641,6 +1663,7 @@ class LocalFavoritesManager with ChangeNotifier {
             e['last_update_time'],
             e['has_new_update'] == 1,
             e['last_check_time'],
+            lastAttemptTime: e['last_attempt_time'],
           ),
         )
         .toList();
@@ -1661,6 +1684,7 @@ class LocalFavoritesManager with ChangeNotifier {
             e['last_update_time'],
             e['has_new_update'] == 1,
             e['last_check_time'],
+            lastAttemptTime: e['last_attempt_time'],
           ),
         )
         .toList();

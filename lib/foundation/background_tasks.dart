@@ -9,6 +9,7 @@ class BackgroundTask extends ChangeNotifier {
     this.key,
     this.title,
     this.cancellable,
+    this._pinned,
     this._changed,
   );
   final int id;
@@ -27,6 +28,25 @@ class BackgroundTask extends ChangeNotifier {
   VoidCallback? onCancel;
   VoidCallback? onOpenResult;
   String? resultLabel;
+  bool _pinned;
+  bool _needsAttention = false;
+
+  bool get pinned => _pinned;
+  bool get needsAttention => _needsAttention;
+
+  /// Presentation can change after work finishes, for example while a
+  /// downloaded update waits for installation.
+  void setPresentation({bool? pinned, bool? needsAttention, String? message}) {
+    if ((pinned == null || pinned == _pinned) &&
+        (needsAttention == null || needsAttention == _needsAttention) &&
+        (message == null || message == this.message)) {
+      return;
+    }
+    if (pinned != null) _pinned = pinned;
+    if (needsAttention != null) _needsAttention = needsAttention;
+    if (message != null) this.message = message;
+    _notify();
+  }
 
   bool get isRunning => status == BackgroundTaskStatus.running;
   double? get progress => total == null || total! <= 0
@@ -96,14 +116,16 @@ class BackgroundTasks extends ChangeNotifier {
   BackgroundTasks();
   final List<BackgroundTask> _tasks = [];
   final ValueNotifier<int> activeCountListenable = ValueNotifier(0);
+  final ValueNotifier<bool> needsAttentionListenable = ValueNotifier(false);
   final Map<String, Future<dynamic>> _running = {};
   Map<String, dynamic> _history = {};
   VoidCallback? _persist;
   int _id = 0;
 
   List<BackgroundTask> get tasks => List.unmodifiable([
-    ..._tasks.reversed.where((task) => task.isRunning),
-    ..._tasks.reversed.where((task) => !task.isRunning),
+    ..._tasks.reversed.where((task) => task.pinned),
+    ..._tasks.reversed.where((task) => !task.pinned && task.isRunning),
+    ..._tasks.reversed.where((task) => !task.pinned && !task.isRunning),
   ]);
   int get activeCount => _tasks.where((t) => t.isRunning).length;
   Map<String, dynamic> get history => _history;
@@ -129,12 +151,17 @@ class BackgroundTasks extends ChangeNotifier {
     return value is int ? DateTime.fromMillisecondsSinceEpoch(value) : null;
   }
 
-  BackgroundTask start(String key, String title, {bool cancellable = false}) {
+  BackgroundTask start(
+    String key,
+    String title, {
+    bool cancellable = false,
+    bool pinned = false,
+  }) {
     final previous = latest(key);
     if (previous != null && previous.isRunning) return previous;
     late final BackgroundTask task;
     var recorded = false;
-    task = BackgroundTask._(++_id, key, title, cancellable, () {
+    task = BackgroundTask._(++_id, key, title, cancellable, pinned, () {
       if (!task.isRunning && !recorded) {
         recorded = true;
         if (!key.startsWith('loading-dialog:') &&
@@ -160,16 +187,14 @@ class BackgroundTasks extends ChangeNotifier {
             _history.remove(old);
           }
         }
-        _prune();
         _persist?.call();
       }
-      activeCountListenable.value = activeCount;
-      notifyListeners();
+      _prune();
+      _notifyState();
     });
     _tasks.add(task);
     _prune();
-    activeCountListenable.value = activeCount;
-    notifyListeners();
+    _notifyState();
     return task;
   }
 
@@ -200,19 +225,26 @@ class BackgroundTasks extends ChangeNotifier {
   }
 
   void _prune() {
-    while (_tasks.where((t) => !t.isRunning).length > 50) {
-      _tasks.removeAt(_tasks.indexWhere((t) => !t.isRunning));
+    while (_tasks.where((t) => !t.isRunning && !t.pinned).length > 50) {
+      _tasks.removeAt(_tasks.indexWhere((t) => !t.isRunning && !t.pinned));
     }
   }
 
   void clearFinished() {
-    _tasks.removeWhere((t) => !t.isRunning);
+    _tasks.removeWhere((t) => !t.isRunning && !t.pinned);
+    _notifyState();
+  }
+
+  void _notifyState() {
+    activeCountListenable.value = activeCount;
+    needsAttentionListenable.value = _tasks.any((task) => task.needsAttention);
     notifyListeners();
   }
 
   @override
   void dispose() {
     activeCountListenable.dispose();
+    needsAttentionListenable.dispose();
     super.dispose();
   }
 }

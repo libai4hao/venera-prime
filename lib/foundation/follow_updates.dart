@@ -9,8 +9,13 @@ import 'package:venera/utils/channel.dart';
 class ComicUpdateResult {
   final bool updated;
   final String? errorMessage;
+  final bool rateLimited;
 
-  ComicUpdateResult(this.updated, this.errorMessage);
+  ComicUpdateResult(
+    this.updated,
+    this.errorMessage, {
+    this.rateLimited = false,
+  });
 }
 
 Future<ComicUpdateResult> updateComic(
@@ -19,13 +24,18 @@ Future<ComicUpdateResult> updateComic(
   bool Function()? shouldCancel,
   bool markNewUpdates = true,
 }) async {
+  ComicUpdateResult failed(String message, {bool rateLimited = false}) {
+    LocalFavoritesManager().recordFailedUpdateAttempt(folder, c.id, c.type);
+    return ComicUpdateResult(false, message, rateLimited: rateLimited);
+  }
+
   int retries = 3;
   while (true) {
     try {
       if (shouldCancel?.call() == true) return ComicUpdateResult(false, null);
       var comicSource = c.type.comicSource;
       if (comicSource == null) {
-        return ComicUpdateResult(false, "Comic source not found");
+        return failed("Comic source not found");
       }
       var newInfo = (await comicSource.loadComicInfo!(c.id)).data;
       if (shouldCancel?.call() == true) return ComicUpdateResult(false, null);
@@ -79,11 +89,17 @@ Future<ComicUpdateResult> updateComic(
     } catch (e, s) {
       if (shouldCancel?.call() == true) return ComicUpdateResult(false, null);
       Log.error("Check Updates", e, s);
-      await Future.delayed(const Duration(seconds: 2));
       retries--;
-      if (retries == 0) {
-        return ComicUpdateResult(false, e.toString());
+      final message = e.toString();
+      // Source errors cross the JS boundary as strings, without HTTP metadata.
+      final rateLimited = RegExp(
+        r'(?:status(?:\s+code)?|http)[:\s]+429\b|\btoo many requests\b',
+        caseSensitive: false,
+      ).hasMatch(message);
+      if (retries == 0 || rateLimited) {
+        return failed(message, rateLimited: rateLimited);
       }
+      await Future.delayed(const Duration(seconds: 2));
     }
   }
 }
@@ -154,6 +170,11 @@ Future<void> updateFolderBase(
     for (var comic in comics) {
       if (!ignoreCheckTime) {
         var lastCheckTime = comic.lastCheckTime;
+        final lastAttemptTime = comic.lastAttemptTime;
+        if (lastAttemptTime != null &&
+            (lastCheckTime == null || lastAttemptTime.isAfter(lastCheckTime))) {
+          lastCheckTime = lastAttemptTime;
+        }
         if (lastCheckTime != null &&
             DateTime.now().difference(lastCheckTime) < checkInterval) {
           current++;
@@ -189,6 +210,9 @@ Future<void> updateFolderBase(
       channel.close();
     }();
 
+    // A rate-limited source is paused for the rest of this batch. Other
+    // sources keep running; a later scheduled or manual check can retry it.
+    final rateLimitedSources = <String, String>{};
     // Consumers
     var updateFutures = <Future>[];
     for (var i = 0; i < 5; i++) {
@@ -198,12 +222,32 @@ Future<void> updateFolderBase(
           if (comic == null) {
             break;
           }
-          final result = await updateComic(
-            comic,
-            folder,
-            shouldCancel: shouldCancel,
-            markNewUpdates: markNewUpdates,
-          );
+          if (shouldCancel()) break;
+          final sourceKey = comic.type.sourceKey;
+          final rateLimitError = rateLimitedSources[sourceKey];
+          final ComicUpdateResult result;
+          if (rateLimitError != null) {
+            LocalFavoritesManager().recordFailedUpdateAttempt(
+              folder,
+              comic.id,
+              comic.type,
+            );
+            result = ComicUpdateResult(
+              false,
+              rateLimitError,
+              rateLimited: true,
+            );
+          } else {
+            result = await updateComic(
+              comic,
+              folder,
+              shouldCancel: shouldCancel,
+              markNewUpdates: markNewUpdates,
+            );
+            if (result.rateLimited) {
+              rateLimitedSources[sourceKey] = result.errorMessage!;
+            }
+          }
           current++;
           if (result.updated) {
             updated++;

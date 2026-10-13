@@ -208,6 +208,21 @@ void registerDataSyncTransportTests({bool device = false}) {
         expect(operations, isNot(contains('DELETE $newName')));
         expect(sync.isUploading, isFalse);
         expect(sync.lastError, isNull);
+        // Source requests repeatedly persist the same cookie/token. With auto
+        // sync enabled those no-op saves must never start a backup or queue one.
+        operations.clear();
+        appdata.implicitData['webdavAutoSync'] = true;
+        final versionBeforeNoOp = appdata.settings['dataVersion'];
+        await tester.runAsync(() async {
+          await Future.wait(List.generate(30, (_) => source.saveData()));
+          await source.loadData();
+          await source.saveData();
+        });
+        expect(operations, isEmpty);
+        expect(appdata.settings['dataVersion'], versionBeforeNoOp);
+        expect(sync.isUploading, isFalse);
+        expect(sync.uploadQueued, isFalse);
+
         // Hold the network transfer so overlapping saves are deterministic.
         Future<void> uploadBurst({
           required bool disable,

@@ -28,6 +28,71 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(AppTranslation.init);
 
+  test('pinned results stay ahead of running tasks and survive cleanup', () {
+    final tasks = BackgroundTasks();
+    addTearDown(tasks.dispose);
+    final ready = tasks.start('ready', 'Ready', pinned: true)..finish();
+    ready.setPresentation(needsAttention: true, message: 'Install');
+    final running = tasks.start('running', 'Running');
+    final finished = tasks.start('finished', 'Finished')..finish();
+    final pinnedRunning = tasks.start('pinned', 'Pinned', pinned: true);
+    final newerRunning = tasks.start('new-running', 'New running');
+    expect(tasks.tasks, [
+      pinnedRunning,
+      ready,
+      newerRunning,
+      running,
+      finished,
+    ]);
+    expect(ready.message, 'Install');
+    expect(ready.status, BackgroundTaskStatus.completed);
+
+    for (var i = 0; i < 60; i++) {
+      tasks.start('old-$i', 'Old $i').finish();
+    }
+    expect(tasks.tasks, contains(ready));
+    expect(
+      tasks.tasks.where((task) => !task.isRunning && !task.pinned),
+      hasLength(50),
+    );
+    tasks.clearFinished();
+    expect(tasks.tasks, [pinnedRunning, ready, newerRunning, running]);
+    expect(tasks.needsAttentionListenable.value, isTrue);
+
+    ready.setPresentation(pinned: false, needsAttention: false);
+    tasks.clearFinished();
+    expect(tasks.tasks, isNot(contains(ready)));
+    expect(tasks.needsAttentionListenable.value, isFalse);
+  });
+
+  test('attention listeners only fire when aggregate attention changes', () {
+    final tasks = BackgroundTasks();
+    addTearDown(tasks.dispose);
+    var notifications = 0;
+    tasks.needsAttentionListenable.addListener(() => notifications++);
+    final first = tasks.start('first', 'First', pinned: true);
+    final second = tasks.start('second', 'Second');
+    expect(first.needsAttention, isFalse);
+    expect(second.pinned, isFalse);
+    first.setPresentation(needsAttention: true);
+    for (var i = 0; i < 5; i++) {
+      first.update(completed: i, total: 5);
+    }
+    second.setPresentation(needsAttention: true);
+    first.finish();
+    first.setPresentation(needsAttention: false);
+    expect(notifications, 1);
+    second.setPresentation(needsAttention: false);
+    expect(notifications, 2);
+    second.setPresentation(needsAttention: false);
+    expect(notifications, 2);
+    second.finish();
+    second.setPresentation(needsAttention: true);
+    expect(notifications, 3);
+    tasks.clearFinished();
+    expect(notifications, 4);
+  });
+
   test('the same running key shares one action and result future', () async {
     final tasks = BackgroundTasks();
     final gate = Completer<int>();
