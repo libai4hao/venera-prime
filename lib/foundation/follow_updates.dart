@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:venera/foundation/appdata.dart';
+import 'package:venera/foundation/background_tasks.dart';
 import 'package:venera/foundation/favorites.dart';
 import 'package:venera/foundation/log.dart';
 import 'package:venera/utils/channel.dart';
@@ -111,7 +112,25 @@ Future<void> updateFolderBase(
   bool ignoreCheckTime, {
   required bool Function() shouldCancel,
   bool markNewUpdates = true,
+  BackgroundTask? backgroundTask,
+  Future<void> Function()? onComplete,
 }) async {
+  void report(UpdateProgress progress) {
+    backgroundTask?.update(
+      completed: progress.current,
+      total: progress.total,
+      message: backgroundTask.cancelRequested
+          ? 'Cancelling...'
+          : progress.comic?.name ?? folder,
+    );
+    if (progress.errorMessage != null) {
+      backgroundTask?.addError(
+        '${progress.comic?.name ?? folder}: ${progress.errorMessage}',
+      );
+    }
+    stream.add(progress);
+  }
+
   try {
     var comics = LocalFavoritesManager().getComicsWithUpdatesInfo(folder);
     int total = comics.length;
@@ -119,7 +138,7 @@ Future<void> updateFolderBase(
     int errors = 0;
     int updated = 0;
 
-    stream.add(UpdateProgress(total, current, errors, updated));
+    report(UpdateProgress(total, current, errors, updated));
 
     var comicsToUpdate = <FavoriteItemWithUpdateInfo>[];
     var checkIntervalValue =
@@ -138,7 +157,7 @@ Future<void> updateFolderBase(
         if (lastCheckTime != null &&
             DateTime.now().difference(lastCheckTime) < checkInterval) {
           current++;
-          stream.add(UpdateProgress(total, current, errors, updated));
+          report(UpdateProgress(total, current, errors, updated));
           continue;
         }
       }
@@ -147,7 +166,7 @@ Future<void> updateFolderBase(
 
     total = comicsToUpdate.length;
     current = 0;
-    stream.add(UpdateProgress(total, current, errors, updated));
+    report(UpdateProgress(total, current, errors, updated));
 
     var channel = Channel<FavoriteItemWithUpdateInfo>(10);
 
@@ -192,7 +211,7 @@ Future<void> updateFolderBase(
           if (result.errorMessage != null) {
             errors++;
           }
-          stream.add(
+          report(
             UpdateProgress(
               total,
               current,
@@ -212,9 +231,18 @@ Future<void> updateFolderBase(
     if (updated > 0) {
       LocalFavoritesManager().notifyChanges();
     }
+    if (!shouldCancel()) await onComplete?.call();
   } catch (e, s) {
-    if (!shouldCancel()) stream.addError(e, s);
+    if (!shouldCancel()) {
+      backgroundTask?.fail(e);
+      stream.addError(e, s);
+    }
   } finally {
+    if (shouldCancel()) backgroundTask?.cancelRequested = true;
+    backgroundTask?.onCancel = null;
+    backgroundTask?.finish(
+      message: shouldCancel() ? 'Cancelled' : 'Update check completed',
+    );
     await stream.close();
   }
 }
@@ -225,14 +253,36 @@ Stream<UpdateProgress> updateFolder(
   String folder,
   bool ignoreCheckTime, {
   bool Function()? shouldCancel,
+  void Function()? onCancel,
   bool markNewUpdates = true,
+  Future<void> Function()? onComplete,
 }) {
   _activeFolderChecks[folder]?.call();
+  final taskKey = 'follow-updates:$folder';
+  final previous = BackgroundTasks.instance.latest(taskKey);
+  if (previous?.isRunning == true && previous!.cancelRequested) {
+    // A replacement takes ownership of this folder; late replies from the old
+    // check are already ignored by updateComic's cancellation checks.
+    previous.onCancel = null;
+    previous.finish(message: 'Cancelled');
+  }
+  final task = BackgroundTasks.instance.start(
+    taskKey,
+    'Follow Updates: $folder',
+    cancellable: true,
+  );
   var canceled = false;
   void cancel() {
+    if (canceled) return;
     canceled = true;
+    if (task.isRunning) {
+      onCancel?.call();
+      task.cancelRequested = true;
+      task.update(message: 'Cancelling...');
+    }
   }
 
+  task.onCancel = cancel;
   _activeFolderChecks[folder] = cancel;
   final stream = StreamController<UpdateProgress>(onCancel: cancel);
   unawaited(
@@ -242,6 +292,8 @@ Stream<UpdateProgress> updateFolder(
       ignoreCheckTime,
       shouldCancel: () => canceled || shouldCancel?.call() == true,
       markNewUpdates: markNewUpdates,
+      backgroundTask: task,
+      onComplete: onComplete,
     ).whenComplete(() {
       if (identical(_activeFolderChecks[folder], cancel)) {
         _activeFolderChecks.remove(folder);

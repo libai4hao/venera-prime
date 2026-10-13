@@ -300,6 +300,7 @@ class _GalleryModeState extends State<_GalleryMode>
     return LayoutBuilder(
       builder: (context, constraints) {
         final viewportSize = constraints.biggest;
+        final margin = readerPageMargin(reader.cid, reader.type.sourceKey);
         return Listener(
           onPointerDown: (event) {
             fingers++;
@@ -358,6 +359,9 @@ class _GalleryModeState extends State<_GalleryMode>
                     (pageImages.length == 1 && !reader.twoPageSpread)) {
                   return PhotoViewGalleryPageOptions(
                     filterQuality: FilterQuality.medium,
+                    initialScale: margin == 0
+                        ? null
+                        : PhotoViewComputedScale.contained * (1 - margin * 2),
                     controller: photoViewControllers[index],
                     imageProvider: _createImageProviderFromKey(
                       pageImages[0],
@@ -379,11 +383,17 @@ class _GalleryModeState extends State<_GalleryMode>
                   controller: photoViewControllers[index],
                   minScale: PhotoViewComputedScale.contained * 1.0,
                   maxScale: PhotoViewComputedScale.covered * 10.0,
-                  child: buildPageImages(
-                    pageImages,
-                    startIndex,
-                    singleCover:
-                        index == 1 && reader.showSingleImageOnFirstPage(),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: viewportSize.width * margin,
+                      vertical: viewportSize.height * margin,
+                    ),
+                    child: buildPageImages(
+                      pageImages,
+                      startIndex,
+                      singleCover:
+                          index == 1 && reader.showSingleImageOnFirstPage(),
+                    ),
                   ),
                 );
               }
@@ -637,9 +647,9 @@ class _GalleryModeState extends State<_GalleryMode>
     if (imageKey.startsWith("file://")) {
       return await File(imageKey.substring(7)).readAsBytes();
     } else {
-      return (await CacheManager().findCache(
+      return CacheManager().readCache(
         "$imageKey@${context.reader.type.sourceKey}@${context.reader.cid}@${context.reader.eid}",
-      ))!.readAsBytes();
+      );
     }
   }
 
@@ -729,6 +739,59 @@ class _ContinuousModeState extends State<_ContinuousMode>
   bool isZoomedIn = false;
   bool isLongPressing = false;
 
+  Size? _lastViewport;
+  double? _lastCrossExtent;
+  bool _restoringLayout = false;
+  int _layoutGeneration = 0;
+  (int, double)? _resizeAnchor;
+
+  void _preservePositionOnResize(Size viewport, double crossExtent) {
+    final previous = _lastViewport;
+    final previousCross = _lastCrossExtent;
+    _lastViewport = viewport;
+    _lastCrossExtent = crossExtent;
+    if (previous == null ||
+        previousCross == null ||
+        (previous == viewport && previousCross == crossExtent)) {
+      return;
+    }
+    final vertical = reader.mode == ReaderMode.continuousTopToBottom;
+    final oldMain = vertical ? previous.height : previous.width;
+    final newMain = vertical ? viewport.height : viewport.width;
+    if (_resizeAnchor == null) {
+      final page = reader.page;
+      final position = itemPositionsListener.itemPositions.value
+          .where((item) => item.index == page)
+          .firstOrNull;
+      _resizeAnchor = (
+        page,
+        position == null || previousCross <= 0
+            ? 0.0
+            : position.itemLeadingEdge * oldMain / previousCross,
+      );
+    }
+    final (page, leadingOffset) = _resizeAnchor!;
+    // Keep the same fraction of the current image above the viewport after
+    // rescaling it, including rotations and adjustments made while reading.
+    final alignment = newMain <= 0
+        ? 0.0
+        : leadingOffset * crossExtent / newMain;
+    final generation = ++_layoutGeneration;
+    _restoringLayout = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _layoutGeneration) return;
+      if (itemScrollController.isAttached) {
+        itemScrollController.jumpTo(index: page, alignment: alignment);
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && generation == _layoutGeneration) {
+          _restoringLayout = false;
+          _resizeAnchor = null;
+        }
+      });
+    });
+  }
+
   @override
   void initState() {
     reader = context.reader;
@@ -749,7 +812,7 @@ class _ContinuousModeState extends State<_ContinuousMode>
   }
 
   void onPositionChanged() {
-    if (itemPositionsListener.itemPositions.value.isEmpty) {
+    if (_restoringLayout || itemPositionsListener.itemPositions.value.isEmpty) {
       return;
     }
     final visible = itemPositionsListener.itemPositions.value.where(
@@ -877,13 +940,40 @@ class _ContinuousModeState extends State<_ContinuousMode>
 
   @override
   Widget build(BuildContext context) {
-    final viewport = reader.size;
+    return LayoutBuilder(
+      builder: (context, constraints) =>
+          _buildImages(context, constraints.biggest),
+    );
+  }
+
+  Widget _buildImages(BuildContext context, Size viewport) {
+    final margin = readerPageMargin(reader.cid, reader.type.sourceKey);
+    final marginEnabled =
+        appdata.settings.getReaderSetting(
+          reader.cid,
+          reader.type.sourceKey,
+          'readerPageMarginEnabled',
+        ) ==
+        true;
     final imageWidth =
-        appdata.settings['limitImageWidth'] &&
+        !marginEnabled &&
+            appdata.settings.getReaderSetting(
+                  reader.cid,
+                  reader.type.sourceKey,
+                  'limitImageWidth',
+                ) ==
+                true &&
             viewport.width / viewport.height > 0.7 &&
             reader.mode == ReaderMode.continuousTopToBottom
         ? viewport.height * 0.7
-        : viewport.width;
+        : viewport.width * (1 - margin * 2);
+    final imageHeight = viewport.height * (1 - margin * 2);
+    _preservePositionOnResize(
+      viewport,
+      reader.mode == ReaderMode.continuousTopToBottom
+          ? imageWidth
+          : imageHeight,
+    );
     Widget widget = ScrollablePositionedList.builder(
       initialScrollIndex: reader.page,
       itemScrollController: itemScrollController,
@@ -931,7 +1021,11 @@ class _ContinuousModeState extends State<_ContinuousMode>
               width: reader.mode == ReaderMode.continuousTopToBottom
                   ? imageWidth
                   : null,
+              height: reader.mode == ReaderMode.continuousTopToBottom
+                  ? null
+                  : imageHeight,
               child: ComicImage(
+                key: ValueKey('reader-continuous-image-$index'),
                 // Bilinear filtering avoids mipmap work while large images are
                 // continuously moving. Gallery mode keeps medium quality for zoom.
                 filterQuality: FilterQuality.low,
@@ -1263,9 +1357,9 @@ class _ContinuousModeState extends State<_ContinuousMode>
     if (imageKey.startsWith("file://")) {
       return await File(imageKey.substring(7)).readAsBytes();
     } else {
-      return (await CacheManager().findCache(
+      return CacheManager().readCache(
         "$imageKey@${context.reader.type.sourceKey}@${context.reader.cid}@${context.reader.eid}",
-      ))!.readAsBytes();
+      );
     }
   }
 

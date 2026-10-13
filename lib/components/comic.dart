@@ -762,9 +762,13 @@ class SliverGridComics extends StatefulWidget {
     this.onTap,
     this.onLongPressed,
     this.selections,
+    this.itemWrapper,
   });
 
   final List<Comic> comics;
+
+  /// Decorates a tile while retaining the shared grid layout and interactions.
+  final Widget Function(Comic comic, Widget child)? itemWrapper;
 
   final Map<Comic, bool>? selections;
 
@@ -848,6 +852,7 @@ class _SliverGridComicsState extends State<SliverGridComics> {
       comics: comics,
       heroIDs: heroIDs,
       selection: widget.selections,
+      itemWrapper: widget.itemWrapper,
       onLastItemBuild: widget.onLastItemBuild,
       badgeBuilder: widget.badgeBuilder,
       menuBuilder: widget.menuBuilder,
@@ -867,9 +872,12 @@ class _SliverGridComics extends StatelessWidget {
     this.onTap,
     this.onLongPressed,
     this.selection,
+    this.itemWrapper,
   });
 
   final List<Comic> comics;
+
+  final Widget Function(Comic comic, Widget child)? itemWrapper;
 
   final List<int> heroIDs;
 
@@ -909,9 +917,9 @@ class _SliverGridComics extends StatelessWidget {
           heroID: heroIDs[index],
         );
         if (selection == null) {
-          return comic;
+          return itemWrapper?.call(comics[index], comic) ?? comic;
         }
-        return AnimatedContainer(
+        final selectedTile = AnimatedContainer(
           key: ValueKey(comics[index].id),
           duration: const Duration(milliseconds: 150),
           decoration: BoxDecoration(
@@ -925,6 +933,7 @@ class _SliverGridComics extends StatelessWidget {
           margin: const EdgeInsets.all(4),
           child: comic,
         );
+        return itemWrapper?.call(comics[index], selectedTile) ?? selectedTile;
       }, childCount: comics.length),
       gridDelegate: SliverGridDelegateWithComics(),
     );

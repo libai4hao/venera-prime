@@ -6,8 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:venera/components/components.dart';
+import 'package:venera/components/background_tasks.dart';
+import 'package:venera/components/window_frame.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
+import 'package:venera/foundation/background_tasks.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
 import 'package:venera/foundation/comic_type.dart';
 import 'package:venera/foundation/favorites.dart';
@@ -17,6 +20,7 @@ import 'package:venera/foundation/local.dart';
 import 'package:venera/foundation/res.dart';
 import 'package:venera/pages/follow_updates_page.dart';
 import 'package:venera/utils/translations.dart';
+import 'package:venera/utils/data_sync.dart';
 
 class _Source implements ComicSource {
   @override
@@ -145,18 +149,214 @@ void registerFollowUpdatesTests() {
     () => updateFolder(folder, true, markNewUpdates: !baseline).toList(),
   ))!.last;
 
+  Future<void> showPage(WidgetTester tester) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('window_manager'),
+      (call) async => call.method == 'isMaximized' ? false : null,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: App.rootNavigatorKey,
+        builder: (context, child) => WindowFrame(child!),
+        home: const FollowUpdatesPage(),
+      ),
+    );
+    DataSync();
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> leavePage(WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: App.rootNavigatorKey,
+        builder: (context, child) => WindowFrame(child!),
+        home: const SizedBox(),
+      ),
+    );
+  }
+
+  Future<void> releaseCheck(WidgetTester tester, BackgroundTask task) async {
+    source.gate!.complete();
+    for (var i = 0; i < 300 && task.isRunning; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    expect(task.isRunning, isFalse);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'manual follow check continues after closing its dialog and page',
+    (tester) async {
+      await setup(tester);
+      try {
+        source.gate = Completer<void>();
+        await showPage(tester);
+        final dynamic page = tester.state(find.byType(FollowUpdatesPage));
+        page.checkNow();
+        await tester.pump();
+        await tester.runAsync(() => source.started.future);
+        final task = BackgroundTasks.instance.latest('follow-updates:$folder')!;
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byKey(const Key('background-task-continue')));
+        await tester.pumpAndSettle();
+        expect(find.byType(TaskStatusText), findsOneWidget);
+        expect(find.text('Running in background'.tl), findsOneWidget);
+        await leavePage(tester);
+        expect(task.isRunning, isTrue);
+        await releaseCheck(tester, task);
+        expect(task.status, BackgroundTaskStatus.completed);
+        expect(manager.countUpdates(folder), 1);
+        await showPage(tester);
+        expect(find.textContaining('Last completed:'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await cleanup(tester);
+      }
+    },
+  );
+
+  for (final cancel in [false, true]) {
+    testWidgets(
+      'folder selection survives page exit and honors cancellation=$cancel',
+      (tester) async {
+        await setup(tester);
+        try {
+          appdata.settings['followUpdatesFolder'] = null;
+          source.gate = Completer<void>();
+          await showPage(tester);
+          final dynamic page = tester.state(find.byType(FollowUpdatesPage));
+          page.setFolder(folder);
+          await tester.pump();
+          await tester.runAsync(() => source.started.future);
+          final task = BackgroundTasks.instance.latest(
+            'follow-updates:$folder',
+          )!;
+          expect(appdata.settings['followUpdatesFolder'], isNull);
+          await tester.pump(const Duration(milliseconds: 300));
+          await tester.tap(find.byKey(const Key('background-task-continue')));
+          await tester.pumpAndSettle();
+          await leavePage(tester);
+          if (cancel) task.requestCancel();
+          await releaseCheck(tester, task);
+          expect(
+            task.status,
+            cancel
+                ? BackgroundTaskStatus.cancelled
+                : BackgroundTaskStatus.completed,
+          );
+          expect(
+            appdata.settings['followUpdatesFolder'],
+            cancel ? null : folder,
+          );
+          expect(tester.takeException(), isNull);
+        } finally {
+          await cleanup(tester);
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'folder cancellation at commit restores and persists the previous selection',
+    (tester) async {
+      await setup(tester);
+      void Function()? listener;
+      try {
+        appdata.settings['followUpdatesFolder'] = null;
+        source.gate = Completer<void>();
+        await showPage(tester);
+        final task = FollowUpdatesService.selectFolder(folder);
+        await tester.pump();
+        await tester.runAsync(() => source.started.future);
+        listener = () {
+          if (appdata.settings['followUpdatesFolder'] == folder &&
+              task.isRunning) {
+            task.requestCancel();
+          }
+        };
+        appdata.settings.addListener(listener);
+        await releaseCheck(tester, task);
+        expect(task.status, BackgroundTaskStatus.cancelled);
+        expect(appdata.settings['followUpdatesFolder'], isNull);
+        final saved = jsonDecode(
+          File('${root.path}/appdata.json').readAsStringSync(),
+        );
+        expect(saved['settings']['followUpdatesFolder'], isNull);
+      } finally {
+        if (listener != null) appdata.settings.removeListener(listener);
+        await cleanup(tester);
+      }
+    },
+  );
+
   testWidgets('follow updates: sequential recheck preserves unread', (
     tester,
   ) async {
     await setup(tester);
     try {
       expect((await check(tester)).updated, 1);
+      expect(
+        BackgroundTasks.instance.latest('follow-updates:$folder')!.status,
+        BackgroundTaskStatus.completed,
+      );
       expect((await check(tester)).updated, 0);
       expect(manager.countUpdates(folder), 1);
     } finally {
       await cleanup(tester);
     }
   });
+
+  testWidgets('follow update failures are retained in the task center', (
+    tester,
+  ) async {
+    await setup(tester);
+    try {
+      ComicSourceManager().remove(source.key);
+      final result = await check(tester);
+      expect(result.errors, 1);
+      final task = BackgroundTasks.instance.latest('follow-updates:$folder')!;
+      expect(task.status, BackgroundTaskStatus.failed);
+      expect(task.errors.single, contains('Comic source not found'));
+    } finally {
+      await cleanup(tester);
+    }
+  });
+
+  testWidgets(
+    'follow update task-center cancellation waits for pending requests',
+    (tester) async {
+      await setup(tester);
+      try {
+        await tester.runAsync(() async {
+          source.gate = Completer<void>();
+          var cancellations = 0;
+          final pending = updateFolder(
+            folder,
+            true,
+            onCancel: () => cancellations++,
+          ).toList();
+          await source.started.future;
+          final task = BackgroundTasks.instance.latest(
+            'follow-updates:$folder',
+          )!;
+          task.requestCancel();
+          expect(cancellations, 1);
+          expect(task.isRunning, isTrue);
+          source.gate!.complete();
+          await pending;
+          expect(task.status, BackgroundTaskStatus.cancelled);
+          expect(cancellations, 1);
+        });
+        expect(manager.countUpdates(folder), 0);
+      } finally {
+        await cleanup(tester);
+      }
+    },
+  );
 
   testWidgets(
     'follow updates: overlapping checks preserve unread and count once',
@@ -167,7 +367,15 @@ void registerFollowUpdatesTests() {
           source.gate = Completer<void>();
           final first = updateFolder(folder, true).toList();
           await source.started.future;
+          final oldTask = BackgroundTasks.instance.latest(
+            'follow-updates:$folder',
+          )!;
           final second = updateFolder(folder, true).toList();
+          expect(oldTask.status, BackgroundTaskStatus.cancelled);
+          expect(
+            BackgroundTasks.instance.latest('follow-updates:$folder'),
+            isNot(same(oldTask)),
+          );
           for (var attempt = 0; source.calls < 2 && attempt < 100; attempt++) {
             await Future<void>.delayed(const Duration(milliseconds: 5));
           }
@@ -278,6 +486,10 @@ void registerFollowUpdatesTests() {
           return pending;
         }))!;
         expect(events.last.updated, 0);
+        expect(
+          BackgroundTasks.instance.latest('follow-updates:$folder')!.status,
+          BackgroundTaskStatus.cancelled,
+        );
         expect(manager.countUpdates(folder), 0);
         expect(
           manager.getComicsWithUpdatesInfo(folder).single.updateTime,
@@ -288,6 +500,106 @@ void registerFollowUpdatesTests() {
       }
     },
   );
+
+  for (final mode in ['detailed', 'brief']) {
+    testWidgets(
+      'left swipe acknowledges only that update and keeps following ($mode)',
+      (tester) async {
+        await setup(tester);
+        try {
+          appdata.settings['comicDisplayMode'] = mode;
+          final type = ComicType.fromKey(source.key);
+          manager.addComic(
+            folder,
+            FavoriteItem(
+              id: '2',
+              name: 'Other tracked comic',
+              coverPath: source.cover,
+              author: '',
+              type: type,
+              tags: [],
+            ),
+            null,
+            '2026-10-6',
+          );
+          await tester.runAsync(() async {
+            await HistoryManager().init();
+            await LocalManager().init();
+          });
+          await check(tester);
+          expect(manager.countUpdates(folder), 2);
+          final baseline = manager
+              .getComicsWithUpdatesInfo(folder)
+              .firstWhere((c) => c.id == '1');
+          await showPage(tester);
+          final first = find.byKey(ValueKey<Object>((folder, type.value, '1')));
+          await tester.scrollUntilVisible(
+            first,
+            200,
+            scrollable: find.byType(Scrollable).first,
+          );
+          await tester.pumpAndSettle();
+          final width = tester.getSize(first).width;
+          // Right swipe must not acknowledge an update.
+          await tester.drag(first, Offset(width * .8, 0));
+          await tester.pumpAndSettle();
+          expect(manager.countUpdates(folder), 2);
+          await tester.runAsync(() async {
+            await tester.drag(first, Offset(-width * .9, 0));
+            await tester.pumpAndSettle();
+            await appdata.saveData(false);
+          });
+          await tester.pumpAndSettle();
+          expect(first, findsNothing);
+          expect(
+            find.byKey(ValueKey<Object>((folder, type.value, '2'))),
+            findsOneWidget,
+          );
+          expect(manager.countUpdates(folder), 1);
+          expect(manager.getFolderComics(folder), hasLength(2));
+          expect(appdata.settings['followUpdatesFolder'], folder);
+          expect(HistoryManager().length, 0);
+          final acknowledged = manager
+              .getComicsWithUpdatesInfo(folder)
+              .firstWhere((c) => c.id == '1');
+          expect(acknowledged.hasNewUpdate, isFalse);
+          expect(acknowledged.updateTime, baseline.updateTime);
+          expect(acknowledged.lastCheckTime, baseline.lastCheckTime);
+          expect(tester.takeException(), isNull);
+
+          // The read flag survives reopening; a recheck of the same chapters
+          // stays quiet, whereas a newly published chapter restores the update.
+          await leavePage(tester);
+          manager.close();
+          await tester.runAsync(() => manager.init());
+          expect(manager.getFolderComics(folder), hasLength(2));
+          expect(manager.countUpdates(folder), 1);
+          expect((await check(tester)).updated, 0);
+          expect(
+            manager
+                .getComicsWithUpdatesInfo(folder)
+                .firstWhere((c) => c.id == '1')
+                .hasNewUpdate,
+            isFalse,
+          );
+          source.chapterIds.add('published-after-swipe');
+          expect((await check(tester)).updated, 2);
+          expect(manager.countUpdates(folder), 2);
+          await showPage(tester);
+          await tester.scrollUntilVisible(
+            first,
+            200,
+            scrollable: find.byType(Scrollable).first,
+          );
+          await tester.pumpAndSettle();
+          expect(first, findsOneWidget);
+          expect(tester.takeException(), isNull);
+        } finally {
+          await cleanup(tester);
+        }
+      },
+    );
+  }
 
   testWidgets(
     'follow updates: unread section refreshes after detection and reading',

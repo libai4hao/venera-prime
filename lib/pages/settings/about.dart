@@ -8,8 +8,6 @@ class AboutSettings extends StatefulWidget {
 }
 
 class _AboutSettingsState extends State<AboutSettings> {
-  bool isCheckingUpdate = false;
-
   @override
   Widget build(BuildContext context) {
     return SmoothCustomScrollView(
@@ -45,22 +43,23 @@ class _AboutSettingsState extends State<AboutSettings> {
             const SizedBox(height: 8),
           ],
         ).paddingHorizontal(24).toSliver(),
-        ListTile(
-          title: Text("Check for updates".tl),
-          trailing: Button.filled(
-            isLoading: isCheckingUpdate,
-            child: Text("Check".tl),
-            onPressed: () {
-              setState(() {
-                isCheckingUpdate = true;
-              });
-              checkUpdateUi().then((value) {
-                setState(() {
-                  isCheckingUpdate = false;
-                });
-              });
-            },
-          ).fixHeight(32),
+        ListenableBuilder(
+          listenable: BackgroundTasks.instance,
+          builder: (context, _) => ListTile(
+            title: Text("Check for updates".tl),
+            subtitle: const TaskStatusText(taskKey: 'app-update-check'),
+            trailing: Button.filled(
+              child: Text(
+                BackgroundTasks.instance
+                            .latest('app-update-check')
+                            ?.isRunning ==
+                        true
+                    ? "Checking".tl
+                    : "Check".tl,
+              ),
+              onPressed: () => checkUpdateUi(),
+            ).fixHeight(32),
+          ),
         ).toSliver(),
         _SwitchSetting(
           title: "Check for updates on startup".tl,
@@ -110,12 +109,12 @@ Future<LatestRelease?> checkUpdate() async {
     ),
   );
   if (res.statusCode != 200 || res.data == null) {
-    return null;
+    throw StateError('Release request failed: ${res.statusCode}');
   }
   final data = res.data!;
   final tag = data["tag_name"]?.toString();
   if (tag == null || tag.isEmpty) {
-    return null;
+    throw const FormatException('Release response is missing a version');
   }
   final version = tag.replaceFirst(RegExp(r"^[vV]"), '').split('+').first;
   return LatestRelease(
@@ -130,53 +129,84 @@ Future<LatestRelease?> checkUpdate() async {
   );
 }
 
+Future<LatestRelease?> startAppUpdateCheck({
+  Future<LatestRelease?> Function()? fetch,
+}) => BackgroundTasks.instance.run<LatestRelease?>(
+  'app-update-check',
+  "Check for updates".tl,
+  (task) async {
+    final release = await (fetch ?? checkUpdate)();
+    if (release == null) {
+      throw const FormatException('Invalid release response');
+    }
+    if (_compareVersion(release.version, App.version)) {
+      task.update(message: '${release.title} (${release.version})');
+      task.resultLabel = "View update".tl;
+      task.onOpenResult = () => showAppUpdateDialog(release);
+    } else {
+      task.update(message: "No new version available".tl);
+    }
+    return release;
+  },
+);
+
+void showAppUpdateDialog(LatestRelease release) {
+  showDialog<void>(
+    context: App.rootContext,
+    builder: (context) => ContentDialog(
+      title: '${release.title} (${release.version})',
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text("A new version is available. Do you want to update now?".tl),
+            if (release.body.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(release.body),
+            ],
+          ],
+        ).paddingHorizontal(16),
+      ),
+      actions: [
+        Button.text(
+          onPressed: () {
+            Navigator.pop(context);
+            launchUrlString(release.url);
+          },
+          child: Text("Update".tl),
+        ),
+      ],
+    ),
+  );
+}
+
 Future<void> checkUpdateUi([
   bool showMessageIfNoUpdate = true,
   bool delay = false,
 ]) async {
+  final future = startAppUpdateCheck();
+  if (showMessageIfNoUpdate) {
+    // Closing/minimizing this dialog never cancels the owned job.
+    unawaited(
+      showBackgroundTask(
+        App.rootContext,
+        BackgroundTasks.instance.latest('app-update-check')!,
+      ),
+    );
+  }
   try {
-    var release = await checkUpdate();
-    if (release != null && _compareVersion(release.version, App.version)) {
-      if (delay) {
-        await Future.delayed(const Duration(seconds: 2));
-      }
-      showDialog(
-        context: App.rootContext,
-        builder: (context) {
-          return ContentDialog(
-            title: "${release.title} (${release.version})",
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    "A new version is available. Do you want to update now?".tl,
-                  ),
-                  if (release.body.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Text(release.body),
-                  ],
-                ],
-              ).paddingHorizontal(16),
-            ),
-            actions: [
-              Button.text(
-                onPressed: () {
-                  Navigator.pop(context);
-                  launchUrlString(release.url);
-                },
-                child: Text("Update".tl),
-              ),
-            ],
-          );
-        },
-      );
-    } else if (showMessageIfNoUpdate) {
-      App.rootContext.showMessage(message: "No new version available".tl);
+    final release = await future;
+    // Preserve the startup new-release notification, while manual checks keep
+    // their result in the task dialog/center even when the page is closed.
+    if (!showMessageIfNoUpdate &&
+        release != null &&
+        _compareVersion(release.version, App.version)) {
+      if (delay) await Future<void>.delayed(const Duration(seconds: 2));
+      showAppUpdateDialog(release);
     }
-  } catch (e, s) {
-    Log.error("Check Update", e.toString(), s);
+  } catch (error, stack) {
+    Log.error('Check Update', error, stack);
   }
 }
 

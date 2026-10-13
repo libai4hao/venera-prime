@@ -6,6 +6,10 @@ import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.graphics.Rect
+import android.view.View
+import android.view.ViewGroup
+import io.flutter.embedding.android.FlutterView
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -103,6 +107,16 @@ class MainActivity : FlutterFragmentActivity() {
         launcher.launch(input)
     }
 
+    private fun findFlutterView(view: View): FlutterView? {
+        if (view is FlutterView) return view
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                findFlutterView(view.getChildAt(index))?.let { return it }
+            }
+        }
+        return null
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         GeneratedPluginRegistrant.registerWith(flutterEngine)
         MethodChannel(
@@ -111,6 +125,24 @@ class MainActivity : FlutterFragmentActivity() {
         ).setMethodCallHandler { call, res ->
             when (call.method) {
                 "getProxy" -> res.success(getProxy())
+                "setTaskButtonGestureExclusion" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val view = findFlutterView(window.decorView)
+                        val bounds = call.argument<List<Int>>("rect")
+                        val rect = if (bounds?.size == 4) {
+                            Rect(bounds[0], bounds[1], bounds[2], bounds[3])
+                        } else null
+                        // Only this small floating control owns the edge gesture;
+                        // the rest of the screen keeps the system Back gesture.
+                        if (view != null) {
+                            view.systemGestureExclusionRects =
+                                if (rect != null && rect.intersect(0, 0, view.width, view.height)) {
+                                    listOf(rect)
+                                } else emptyList()
+                        }
+                    }
+                    res.success(null)
+                }
                 "setScreenOn" -> {
                     val set = call.argument<Boolean>("set") ?: false
                     if (set) {

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:venera/foundation/app.dart';
+import 'package:venera/foundation/background_tasks.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
 import 'package:venera/foundation/local.dart';
 import 'package:venera/network/download.dart';
@@ -122,6 +123,11 @@ void main() {
             }, _ListingOverrides(pages.path));
             expect(task.isError, isFalse);
             expect(task.progress, 1);
+            await Future<void>.delayed(Duration.zero);
+            expect(
+              BackgroundTasks.instance.latest(task.backgroundTaskKey)!.status,
+              BackgroundTaskStatus.completed,
+            );
             expect(
               manager.find('comic', task.comicType)!.downloadedChapters,
               withChapters ? ['1'] : isEmpty,
