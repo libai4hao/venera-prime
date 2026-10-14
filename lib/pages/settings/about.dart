@@ -73,10 +73,10 @@ class _AboutSettingsState extends State<AboutSettings> {
           },
         ).toSliver(),
         ListTile(
-          title: const Text("Telegram"),
+          title: Text("Telegram group chat".tl),
           trailing: const Icon(Icons.open_in_new),
           onTap: () {
-            launchUrlString("https://t.me/venera_release");
+            launchUrlString("https://t.me/+-Z0d_TB_Alk0YzU1");
           },
         ).toSliver(),
       ],

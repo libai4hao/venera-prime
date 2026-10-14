@@ -9,6 +9,11 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const description =
       'Venera Prime is a free and open-source app for comic reading.';
+  const telegramLabels = {
+    'zh-CN': 'Telegram群聊',
+    'zh-TW': 'Telegram群組聊天',
+    'en-US': 'Telegram group chat',
+  };
 
   setUpAll(AppTranslation.init);
 
@@ -37,6 +42,8 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
+          expect(find.text(telegramLabels[locale]!), findsOneWidget);
+          expect(find.text('Telegram'), findsNothing);
           final translated = description.tl;
           if (locale.startsWith('zh')) expect(translated, isNot(description));
           final finder = find.text(translated);
