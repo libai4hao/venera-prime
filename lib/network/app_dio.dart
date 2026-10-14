@@ -212,9 +212,9 @@ class MyLogInterceptor implements Interceptor {
           "headers:\n${_safeHeaders(options.headers, extraMasks)}\n"
           "data:\n${options.extra["maskDataInLog"] == true ? dataMask : _safeValue(options.data)}",
     );
-    options.connectTimeout = const Duration(seconds: 15);
-    options.receiveTimeout = const Duration(seconds: 15);
-    options.sendTimeout = const Duration(seconds: 15);
+    options.connectTimeout ??= const Duration(seconds: 15);
+    options.receiveTimeout ??= const Duration(seconds: 15);
+    options.sendTimeout ??= const Duration(seconds: 15);
     handler.next(options);
   }
 }
