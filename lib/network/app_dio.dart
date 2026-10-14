@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/services.dart';
 import 'package:rhttp/rhttp.dart' as rhttp;
 import 'package:venera/foundation/appdata.dart';
@@ -218,9 +219,8 @@ class MyLogInterceptor implements Interceptor {
   }
 }
 
-class AppDio with DioMixin {
-  AppDio([BaseOptions? options]) {
-    this.options = options ?? BaseOptions();
+class AppDio extends DioForNative {
+  AppDio([super.baseOptions]) {
     httpClientAdapter = RHttpAdapter();
     if (App.isInitialized) {
       final cookieJar = SingleInstanceCookieJar.instance;

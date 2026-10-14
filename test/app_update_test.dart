@@ -5,6 +5,7 @@ import 'package:dio/io.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:venera/foundation/app_update.dart';
+import 'package:venera/network/app_dio.dart' show AppDio;
 
 ReleaseAsset apk(String name) => ReleaseAsset(
   name: name,
@@ -91,7 +92,7 @@ void main() {
       await server.close(force: true);
       await dir.delete(recursive: true);
     });
-    Dio localDio() => Dio()
+    Dio localDio() => AppDio()
       ..httpClientAdapter = IOHttpClientAdapter(
         createHttpClient: () => HttpOverrides.runWithHttpOverrides(
           () => HttpClient(),
@@ -108,12 +109,15 @@ void main() {
     test(
       'verified download becomes installable and partial file is removed',
       () async {
+        final progress = <int>[];
         final downloaded = await AppUpdateDownloader(dio: localDio()).download(
           asset(digest: 'sha256:${sha256.convert(bytes)}'),
           dir,
           cancelToken: CancelToken(),
+          onProgress: (received, total) => progress.add(received),
         );
         expect(await downloaded.readAsBytes(), bytes);
+        expect(progress.last, bytes.length);
         expect(await File('${downloaded.path}.part').exists(), isFalse);
       },
     );
@@ -134,6 +138,19 @@ void main() {
         AppUpdateDownloader(
           dio: localDio(),
         ).download(asset(), dir, cancelToken: cancel),
+        throwsA(isA<DioException>()),
+      );
+      expect(dir.listSync(), isEmpty);
+    });
+    test('cancellation during transfer removes partial files', () async {
+      final cancel = CancelToken();
+      await expectLater(
+        AppUpdateDownloader(dio: localDio()).download(
+          asset(),
+          dir,
+          cancelToken: cancel,
+          onProgress: (_, _) => cancel.cancel(),
+        ),
         throwsA(isA<DioException>()),
       );
       expect(dir.listSync(), isEmpty);
