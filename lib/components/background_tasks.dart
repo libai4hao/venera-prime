@@ -184,7 +184,18 @@ Future<void> showBackgroundTask(
   );
 }
 
-Future<void> showBackgroundTasks(
+final _backgroundTaskPanels = Expando<Future<void>>();
+
+Future<void> showBackgroundTasks(BuildContext context) {
+  final navigationContext = _navigationContext(context);
+  final navigator = Navigator.of(navigationContext, rootNavigator: true);
+  return _backgroundTaskPanels[navigator] ??=
+      _showBackgroundTasks(navigationContext).whenComplete(() {
+        _backgroundTaskPanels[navigator] = null;
+      });
+}
+
+Future<void> _showBackgroundTasks(
   BuildContext context,
 ) => showModalBottomSheet<void>(
   context: _navigationContext(context),

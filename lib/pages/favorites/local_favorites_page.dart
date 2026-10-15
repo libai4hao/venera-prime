@@ -653,10 +653,6 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
               },
             ).paddingBottom(8).paddingRight(8),
           ),
-        SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: TaskStatusText(taskKey: favoriteInfoTaskKey(isAllFolder ? null : widget.folder)),
-        )),
         if (isLoading)
           SliverToBoxAdapter(
             child: SizedBox(
