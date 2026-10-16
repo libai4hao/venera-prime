@@ -37,6 +37,30 @@ void main() {
     BackgroundTasks.instance.configure(history: {});
   });
 
+  testWidgets('empty task counts are hidden in the panel and details', (
+    tester,
+  ) async {
+    BackgroundTasks.instance.start('empty-check', 'Empty check')
+      ..update(completed: 0, total: 0)
+      ..finish(message: 'No comics to check');
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: App.rootNavigatorKey,
+        builder: (context, child) => BackgroundTaskOverlay(child: child!),
+        home: const Scaffold(),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('background-task-badge')));
+    await tester.pumpAndSettle();
+    expect(find.text('No comics to check'), findsOneWidget);
+    expect(find.textContaining('0/0'), findsNothing);
+    await tester.tap(find.text('Empty check'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.textContaining('0/0'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('repeated badge activation opens only one task panel', (
     tester,
   ) async {

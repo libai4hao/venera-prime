@@ -107,7 +107,7 @@ Future<void> showBackgroundTask(
                   const SizedBox(height: 12),
                   if (task.isRunning)
                     LinearProgressIndicator(value: task.progress),
-                  if (task.total != null)
+                  if (task.total != null && task.total! > 0)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text('${task.completed}/${task.total}'),
@@ -250,7 +250,7 @@ Future<void> _showBackgroundTasks(
                               Text(
                                 openResult
                                     ? (task.resultLabel ?? 'View result').tl
-                                    : '${_status(task)}${task.total == null ? '' : '  ${task.completed}/${task.total}'}',
+                                    : '${_status(task)}${task.total == null || task.total! <= 0 ? '' : '  ${task.completed}/${task.total}'}',
                               ),
                               if (task.isRunning)
                                 LinearProgressIndicator(value: task.progress),

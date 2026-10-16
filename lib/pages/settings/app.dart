@@ -207,12 +207,13 @@ class _AppSettingsState extends State<AppSettings> {
             final cacheFile = File(
               FilePath.join(App.cachePath, 'import_data_temp'),
             );
+            var skippedSources = <String>[];
             try {
               await file.saveTo(cacheFile.path);
               if (file.name.endsWith('picadata')) {
                 await importPicaData(cacheFile);
               } else {
-                await importAppData(cacheFile);
+                skippedSources = await importAppData(cacheFile);
               }
             } catch (error, stack) {
               controller.fail(error);
@@ -224,6 +225,26 @@ class _AppSettingsState extends State<AppSettings> {
               await cacheFile.deleteIgnoreError();
               controller.close();
               App.forceRebuild();
+            }
+            if (skippedSources.isNotEmpty) {
+              await showDialog<void>(
+                context: App.rootContext,
+                builder: (context) => AlertDialog(
+                  title: Text('Import completed with warnings'.tl),
+                  scrollable: true,
+                  content: SelectableText(
+                    'Skipped empty source scripts: @files'.tlParams({
+                      'files': skippedSources.join('\n'),
+                    }),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Text('Close'.tl),
+                    ),
+                  ],
+                ),
+              );
             }
           },
           actionTitle: 'Import'.tl,

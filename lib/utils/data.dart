@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:isolate';
 
+import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 import 'package:venera/network/cookie_jar.dart';
 import 'package:venera/foundation/app.dart';
@@ -139,7 +140,11 @@ Future<File> exportAppData([bool sync = true]) async {
   return cacheFile;
 }
 
-Future<void> importAppData(File file, [bool checkVersion = false]) async {
+/// Returns empty source scripts omitted from this restore.
+Future<List<String>> importAppData(
+  File file, [
+  bool checkVersion = false,
+]) async {
   var cacheDirPath = FilePath.join(
     App.cachePath,
     'temp_data_${DateTime.now().microsecondsSinceEpoch}',
@@ -148,8 +153,8 @@ Future<void> importAppData(File file, [bool checkVersion = false]) async {
   await cacheDir.create(recursive: true);
   try {
     await ArchiveSecurity.extract(file, cacheDir);
-    await _validateBackupSources(cacheDir);
     _validateBackupManifest(cacheDir);
+    final skippedSources = await _validateBackupSources(cacheDir);
     var historyFile = cacheDir.joinFile("history.db");
     var localFavoriteFile = cacheDir.joinFile("local_favorite.db");
     var readLaterFile = cacheDir.joinFile("read_later.db");
@@ -180,7 +185,7 @@ Future<void> importAppData(File file, [bool checkVersion = false]) async {
       var data = jsonDecode(await appdataFile.readAsString());
       var version = data is Map ? (data["settings"]?['dataVersion']) : null;
       if (version is int && version <= appdata.settings["dataVersion"]) {
-        return;
+        return const [];
       }
     }
     await _commitBackup(
@@ -191,9 +196,14 @@ Future<void> importAppData(File file, [bool checkVersion = false]) async {
       statisticsFile,
       appdataFile,
       restoreWebdav: !checkVersion,
+      skippedSources: skippedSources,
     );
+    for (final name in skippedSources) {
+      Log.warning('Import Data', 'Skipped empty source script: $name');
+    }
+    return skippedSources;
   } finally {
-    cacheDir.deleteIgnoreError(recursive: true);
+    await cacheDir.deleteIgnoreError(recursive: true);
   }
 }
 
@@ -227,9 +237,10 @@ void _validateBackupManifest(Directory staging) {
   }
 }
 
-Future<void> _validateBackupSources(Directory staging) async {
+Future<List<String>> _validateBackupSources(Directory staging) async {
+  final skipped = <String>[];
   final sourceDir = Directory(FilePath.join(staging.path, 'comic_source'));
-  if (!await sourceDir.exists()) return;
+  if (!await sourceDir.exists()) return skipped;
   await for (final entity in sourceDir.list(
     recursive: true,
     followLinks: false,
@@ -258,9 +269,13 @@ Future<void> _validateBackupSources(Directory staging) async {
       }
     } else if (name.endsWith('.js') &&
         (await entity.readAsString()).trim().isEmpty) {
-      throw const FormatException('Source script is empty');
+      skipped.add(
+        p.relative(entity.path, from: staging.path).replaceAll('\\', '/'),
+      );
+      await entity.delete();
     }
   }
+  return skipped;
 }
 
 void _validateBackupJson(File file) {
@@ -296,7 +311,17 @@ Future<void> _commitBackup(
   File statisticsFile,
   File appdataFile, {
   required bool restoreWebdav,
+  required List<String> skippedSources,
 }) async {
+  // An invalid backup script must not discard a working local copy.
+  for (final name in skippedSources) {
+    final current = File(ArchiveSecurity.safeTarget(App.dataPath, name));
+    if (FileSystemEntity.typeSync(current.path, followLinks: false) ==
+            FileSystemEntityType.file &&
+        (await current.readAsString()).trim().isNotEmpty) {
+      await current.copy(ArchiveSecurity.safeTarget(staging.path, name));
+    }
+  }
   final stamp = DateTime.now().millisecondsSinceEpoch.toString();
   final rollback = Directory(FilePath.join(App.cachePath, 'restore_$stamp'));
   await rollback.create(recursive: true);

@@ -183,6 +183,110 @@ void main() {
           expect(cookies.loadForRequest(uri).single.value, 'fixture-session');
           await exported.delete();
         }
+
+        const preservedScript = '''
+class BackupPreserved extends ComicSource {
+  name = 'Backup fixture';
+  key = 'backup_preserved';
+  version = '1.0.0';
+  minAppVersion = '1.0.0';
+  comic = {};
+  search = {};
+}
+''';
+        final backupFiles = <String, List<int>>{
+          'history.db': _emptyDatabase('${directory.path}/source-history.db'),
+          'local_favorite.db': _emptyDatabase(
+            '${directory.path}/source-favorites.db',
+          ),
+          'appdata.json': utf8.encode(
+            jsonEncode({
+              'settings': {'token': 'restored-with-warning'},
+              'searchHistory': [],
+            }),
+          ),
+          'comic_source/fixture.data': utf8.encode(
+            '{"account":["fixture-user","fixture-password"]}',
+          ),
+          'comic_source/preserved.js': [],
+          'comic_source/empty.js': [],
+          'comic_source/nested/blank.js': utf8.encode(' \n\t'),
+        };
+        for (final withManifest in [false, true]) {
+          final files = Map<String, List<int>>.from(backupFiles);
+          if (withManifest) {
+            files['manifest.json'] = utf8.encode(
+              jsonEncode({'format': 1, 'files': backupFiles.keys.toList()}),
+            );
+          }
+          final backup = await _archive(
+            '${directory.path}/empty-source-$withManifest.venera',
+            files,
+          );
+          final preserved = File('${sourceDir.path}/preserved.js')
+            ..writeAsStringSync(preservedScript);
+          final skipped = await importAppData(backup);
+          expect(
+            skipped,
+            unorderedEquals([
+              'comic_source/preserved.js',
+              'comic_source/empty.js',
+              'comic_source/nested/blank.js',
+            ]),
+          );
+          expect(preserved.readAsStringSync(), preservedScript);
+          expect(ComicSource.find('backup_preserved'), isNotNull);
+          expect(File('${sourceDir.path}/empty.js').existsSync(), isFalse);
+          expect(
+            File('${sourceDir.path}/nested/blank.js').existsSync(),
+            isFalse,
+          );
+          expect(
+            jsonDecode(sourceData.readAsStringSync())['account'][1],
+            'fixture-password',
+          );
+          expect(appdata.settings['token'], 'restored-with-warning');
+          expect(manager.getAll().single.id, 'backup-id');
+          expect(cookies.loadForRequest(uri).single.value, 'fixture-session');
+        }
+
+        // Skipping bad scripts cannot bypass manifest or credential validation.
+        final missingSource = await _archive(
+          '${directory.path}/missing-source.venera',
+          {
+            ...backupFiles,
+            'manifest.json': utf8.encode(
+              jsonEncode({
+                'format': 1,
+                'files': [...backupFiles.keys, 'comic_source/missing.js'],
+              }),
+            ),
+          },
+        );
+        await expectLater(importAppData(missingSource), throwsFormatException);
+        final invalidSourceData = await _archive(
+          '${directory.path}/invalid-source-data.venera',
+          {
+            ...backupFiles,
+            'comic_source/fixture.data': utf8.encode('not JSON'),
+          },
+        );
+        await expectLater(
+          importAppData(invalidSourceData),
+          throwsFormatException,
+        );
+        final invalidDatabase = await _archive(
+          '${directory.path}/invalid-source-database.venera',
+          {...backupFiles, 'history.db': utf8.encode('not SQLite')},
+        );
+        await expectLater(
+          importAppData(invalidDatabase),
+          throwsA(isA<SqliteException>()),
+        );
+        expect(appdata.settings['token'], 'restored-with-warning');
+        expect(ComicSource.find('backup_preserved'), isNotNull);
+        expect(manager.getAll().single.id, 'backup-id');
+        ComicSourceManager().remove('backup_preserved');
         await sourceDir.delete(recursive: true);
         JsEngine().dispose();
       }

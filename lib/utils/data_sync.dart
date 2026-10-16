@@ -322,8 +322,14 @@ class DataSync with ChangeNotifier {
         );
         await client.read2File(file.name!, localFile.path);
         task.update(completed: 2, message: 'Restoring backup');
-        await importAppData(localFile, true);
-        task.update(completed: 3, message: 'Backup restored');
+        final skippedSources = await importAppData(localFile, true);
+        task.update(
+          completed: 3,
+          message: skippedSources.isEmpty
+              ? 'Backup restored'
+              : 'Backup restored. Skipped empty source scripts: @files'
+                    .tlParams({'files': skippedSources.join('\n')}),
+        );
         Log.info("Data Sync", "Data downloaded successfully");
         return const Res(true);
       } catch (e, s) {
