@@ -22,12 +22,22 @@
 - 已读取线上 v2.4.4 的正文作为写作参考；本版测试数字和验证范围均来自当前检查，没有沿用历史真机或构建结论。
 - 新增功能及修复的具体范围见 `doc/release-2.6.2.md`；WAL 与多设备同步排查见 `doc/webdav-sync-2026-10-17.md`。
 
-## 发布阶段剩余事项
+## 发布执行约定
 
 本记录保存提交前的本地准备结果。记录时尚未提交、推送、创建标签或发布，未关闭 issue，未修改既有 Release；正式发布结果以随后执行的工作流为准。
 
 正式发布时沿用 Anonymous 或 github-actions[bot] 的 author 和 committer；通过既有机器人流程完成 Android、iOS、macOS、Windows、Linux x64、Linux ARM64 六平台构建及十四个标准附件。以六平台和机器人 Release 任务全部成功作为完成条件，随后记录实际工作流结果，并按既有授权清理已完成的 run 记录。
 
-AltStore 当前源仍对应已发布的 2.6.1，不能提前生成不存在的 2.6.2 IPA 地址和大小；新增工作流在 2.6.2 实际发布成功后读取真实元数据更新源。
+准备阶段 AltStore 源保留已发布的 2.6.1，没有提前生成 2.6.2 IPA 地址和大小；正式发布成功后，新增工作流读取真实元数据更新源。
 
 本轮没有执行真机安装、真实图源/WebDAV 服务流程、用户原始备份完整恢复或上一版本应用内升级；正式发布前后应据实际结果更新 Release 的验证范围。
+
+## 正式发布结果
+
+- 发布提交：`87fccc405785cb9d2a1581752386abce3fa7bc20`，标签 `v2.6.2`；author、committer 均为 `Anonymous <anonymous@users.noreply.github.com>`。
+- [2.6.2 Release](https://github.com/venera-app/venera-prime/releases/tag/v2.6.2) 已正式发布，发布者为 `github-actions[bot]`，不是草稿或预发布。
+- [发布工作流 39022448858](https://github.com/venera-app/venera-prime/actions/runs/39022448858)：版本与身份校验、Android、iOS、macOS、Windows、Linux x64、Linux ARM64、Release、Update_AltStore 九项任务全部成功，无失败、取消或跳过任务。
+- AltStore 机器人更新提交为 `56263d8`，已快进同步回本地；源使用 Prime 包名和实际发布的 2.6.2 元数据。
+- 本轮初始 push 校验工作流为 [39022427450](https://github.com/venera-app/venera-prime/actions/runs/39022427450)，已成功完成。
+- 按授权在保留上述结果后清理已完成的 Actions run 记录，因此工作流链接随后可能不可访问；保留 Release、标签和发布附件。
+- 本轮未单独下载、核验线上附件、比对哈希或检查 APK 签名；构建成功不代表完成真机安装及升级验证。
