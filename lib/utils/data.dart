@@ -66,6 +66,29 @@ Future<File> exportAppData([bool sync = true]) async {
           manifestFiles.add(name);
         }
 
+        void addDatabaseSnapshot(
+          String name,
+          String path, {
+          bool optional = false,
+        }) {
+          if (!File(path).existsSync()) {
+            if (optional) return;
+            throw StateError('Backup database does not exist: $name');
+          }
+          final snapshotPath = '$cacheFilePath.$name';
+          final db = sqlite3.open(path, mode: OpenMode.readOnly);
+          try {
+            db.execute('PRAGMA busy_timeout = 5000;');
+            // Copying the main file alone omits committed rows still in WAL.
+            db.execute('VACUUM main INTO ?;', [snapshotPath]);
+            addStableFile(name, snapshotPath);
+          } finally {
+            db.dispose();
+            final snapshot = File(snapshotPath);
+            if (snapshot.existsSync()) snapshot.deleteSync();
+          }
+        }
+
         void addSourceFile(String name, String path) {
           final bytes = readStableFile(path);
           try {
@@ -89,23 +112,15 @@ Future<File> exportAppData([bool sync = true]) async {
           sync ? "syncdata.json" : "appdata.json",
         );
         final cookiePath = FilePath.join(dataPath, 'cookie.db');
-        if (File(cookiePath).existsSync()) {
-          final snapshotPath = '$cacheFilePath.cookies';
-          final db = sqlite3.open(cookiePath, mode: OpenMode.readOnly);
-          try {
-            // SQLite produces a consistent snapshot, including any WAL contents.
-            db.execute('VACUUM main INTO ?;', [snapshotPath]);
-            addStableFile('cookie.db', snapshotPath);
-          } finally {
-            db.dispose();
-            final snapshot = File(snapshotPath);
-            if (snapshot.existsSync()) snapshot.deleteSync();
-          }
-        }
-        addStableFile("history.db", historyFile);
-        addStableFile("local_favorite.db", localFavoriteFile);
-        addStableFile("read_later.db", readLaterFile, optional: true);
-        addStableFile("reading_statistics.db", statisticsFile, optional: true);
+        addDatabaseSnapshot('cookie.db', cookiePath, optional: true);
+        addDatabaseSnapshot("history.db", historyFile);
+        addDatabaseSnapshot("local_favorite.db", localFavoriteFile);
+        addDatabaseSnapshot("read_later.db", readLaterFile, optional: true);
+        addDatabaseSnapshot(
+          "reading_statistics.db",
+          statisticsFile,
+          optional: true,
+        );
         addStableFile("appdata.json", appdataFile);
         final sourceDirectory = Directory(
           FilePath.join(dataPath, "comic_source"),
@@ -141,10 +156,7 @@ Future<File> exportAppData([bool sync = true]) async {
 }
 
 /// Returns empty source scripts omitted from this restore.
-Future<List<String>> importAppData(
-  File file, [
-  bool checkVersion = false,
-]) async {
+Future<List<String>> importAppData(File file, {bool sync = false}) async {
   var cacheDirPath = FilePath.join(
     App.cachePath,
     'temp_data_${DateTime.now().microsecondsSinceEpoch}',
@@ -181,13 +193,8 @@ Future<List<String>> importAppData(
     if (await statisticsFile.exists()) {
       _validateBackupDatabase(statisticsFile, 'reading_statistics');
     }
-    if (checkVersion && appdataFile.existsSync()) {
-      var data = jsonDecode(await appdataFile.readAsString());
-      var version = data is Map ? (data["settings"]?['dataVersion']) : null;
-      if (version is int && version <= appdata.settings["dataVersion"]) {
-        return const [];
-      }
-    }
+    // DataSync checks remote snapshot identity. Independent devices can have
+    // equal counters with different contents, so the counter is not a gate.
     await _commitBackup(
       cacheDir,
       historyFile,
@@ -195,7 +202,7 @@ Future<List<String>> importAppData(
       readLaterFile,
       statisticsFile,
       appdataFile,
-      restoreWebdav: !checkVersion,
+      restoreWebdav: !sync,
       skippedSources: skippedSources,
     );
     for (final name in skippedSources) {

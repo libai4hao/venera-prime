@@ -409,7 +409,7 @@ class _BackgroundTaskOverlayState extends State<BackgroundTaskOverlay> {
         );
         final x = _drag != null
             ? _drag!.dx.clamp(minX, maxX)
-            : (_right ? maxX + 18 : minX - 18);
+            : (_right ? maxX : minX);
         _updateExclusion(
           context,
           widget.enabled

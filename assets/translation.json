@@ -1,5 +1,18 @@
 {
   "zh_CN": {
+    "Save": "保存",
+    "Failed to export": "导出失败",
+    "Directory display order": "目录显示排序",
+    "Chapter reading order": "章节实际阅读顺序",
+    "Automatic (chapter links)": "自动（优先使用章节链接）",
+    "Source order (earliest first)": "源顺序（较早章节在前）",
+    "Source order (latest first)": "源顺序（较晚章节在前）",
+
+    "Source order": "源默认顺序",
+    "Reversed source order": "源默认逆序",
+    "Chapter title ascending": "章节名称升序",
+    "Chapter title descending": "章节名称降序",
+
     "Check readability": "检测阅读可用性",
     "Checking readability…": "正在检测阅读可用性…",
     "Not checked": "尚未检测",
@@ -675,6 +688,19 @@
     "Read a comic or swipe left to mark its latest chapters as read. Following stays enabled.": "阅读漫画或左滑可标记已看完最新章节，仍保留追更。"
   },
   "zh_TW": {
+    "Save": "儲存",
+    "Failed to export": "匯出失敗",
+    "Directory display order": "目錄顯示排序",
+    "Chapter reading order": "章節實際閱讀順序",
+    "Automatic (chapter links)": "自動（優先使用章節連結）",
+    "Source order (earliest first)": "來源順序（較早章節在前）",
+    "Source order (latest first)": "來源順序（較晚章節在前）",
+
+    "Source order": "來源預設順序",
+    "Reversed source order": "來源預設逆序",
+    "Chapter title ascending": "章節名稱升序",
+    "Chapter title descending": "章節名稱降序",
+
     "Check readability": "檢測閱讀可用性",
     "Checking readability…": "正在檢測閱讀可用性…",
     "Not checked": "尚未檢測",

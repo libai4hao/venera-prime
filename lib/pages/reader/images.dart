@@ -31,6 +31,7 @@ class _ReaderImagesState extends State<_ReaderImages> {
   void _handleJumpToLastPage() {
     if (reader._jumpToLastPageOnLoad) {
       reader._page = reader.maxPage;
+      reader._alignContinuousChapterEnd = reader.mode.isContinuous;
       reader._jumpToLastPageOnLoad = false;
     }
   }
@@ -54,6 +55,7 @@ class _ReaderImagesState extends State<_ReaderImages> {
         if (!mounted) return;
         setState(() {
           reader.images = images;
+          reader.resolveChapterNavigation();
           reader.isLoading = false;
           inProgress = false;
           _handleJumpToLastPage();
@@ -87,6 +89,7 @@ class _ReaderImagesState extends State<_ReaderImages> {
           if (!mounted) return;
           setState(() {
             reader.images = res.data;
+            reader.resolveChapterNavigation();
             reader.isLoading = false;
             inProgress = false;
             _handleJumpToLastPage();
@@ -879,6 +882,8 @@ class _ContinuousModeState extends State<_ContinuousMode>
   @override
   void initState() {
     reader = context.reader;
+    _openingAtChapterEnd = reader._alignContinuousChapterEnd;
+    reader._alignContinuousChapterEnd = false;
     reader._imageViewController = this;
     itemPositionsListener.itemPositions.addListener(onPositionChanged);
     cached = List.filled(reader.maxPage + 2, false);
@@ -887,6 +892,28 @@ class _ContinuousModeState extends State<_ContinuousMode>
       () => cacheImages(reader.page),
     );
     super.initState();
+  }
+
+  bool _openingAtChapterEnd = false;
+  bool _endAlignmentScheduled = false;
+
+  void _alignChapterEnd() {
+    if (!_openingAtChapterEnd || _endAlignmentScheduled) return;
+    _endAlignmentScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _endAlignmentScheduled = false;
+      if (!mounted ||
+          !_openingAtChapterEnd ||
+          !_visibleImagesReady ||
+          _scrollController?.hasClients != true) {
+        return;
+      }
+      // Initial placeholder extents can move the list away from its end when
+      // uncached images decode. Enter the previous chapter at the decoded end.
+      final position = scrollController.position;
+      position.jumpTo(position.maxScrollExtent);
+      _openingAtChapterEnd = false;
+    });
   }
 
   @override
@@ -1126,6 +1153,7 @@ class _ContinuousModeState extends State<_ContinuousMode>
                 fit: BoxFit.contain,
                 onInit: (state) => imageStates.add(state),
                 onDispose: (state) => imageStates.remove(state),
+                onImageReady: _alignChapterEnd,
               ),
             ),
           ),
@@ -1151,6 +1179,7 @@ class _ContinuousModeState extends State<_ContinuousMode>
 
     widget = Listener(
       onPointerDown: (event) {
+        _openingAtChapterEnd = false;
         fingers++;
         _resetChapterSwipe();
         if (fingers == 1 && !isZoomedIn) {

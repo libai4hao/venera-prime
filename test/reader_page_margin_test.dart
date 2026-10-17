@@ -130,6 +130,9 @@ Future<dynamic> openReader(WidgetTester tester, String mode) async {
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 2));
+    // Drain queued saves in both the fake clock and the real filesystem before
+    // removing the fixture directory.
+    await settle(tester);
     await tester.runAsync(() async {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       local.close();
@@ -258,7 +261,16 @@ void main() {
       );
       state.update();
       await settle(tester);
-      await tester.drag(slider, const Offset(-35, 0));
+      final scopedControl = tester.widget<ReaderPageMarginSetting>(
+        find.descendant(
+          of: controls,
+          matching: find.byType(ReaderPageMarginSetting),
+        ),
+      );
+      expect(scopedControl.comicId, state.cid);
+      // Slider drags begin at an absolute track position. Repeating the same
+      // drag selects the same percentage even when a different scope is active.
+      await tester.drag(slider, const Offset(-55, 0));
       await settle(tester);
       expect(
         appdata.settings.getDeviceReaderSetting('readerPageMarginPercent'),
@@ -419,14 +431,9 @@ void main() {
       await tester.tap(
         find.descendant(of: tile, matching: find.byType(Switch)),
       );
+      // The dependent UI must be notified before asynchronous disk writes finish.
+      expect(changes, contains('readerPageMarginEnabled'));
       await settle(tester);
-      for (
-        var i = 0;
-        i < 20 && !changes.contains('readerPageMarginEnabled');
-        i++
-      ) {
-        await settle(tester);
-      }
       expect(appdata.settings['readerPageMarginEnabled'], false);
       expect(changes, contains('readerPageMarginEnabled'));
       expect(tester.takeException(), isNull);

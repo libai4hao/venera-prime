@@ -45,6 +45,9 @@ import 'package:venera/utils/opencc.dart';
 import 'package:venera/utils/tags_translation.dart';
 import 'package:venera/utils/translations.dart';
 import 'package:venera/utils/chapter_visibility.dart';
+import 'package:venera/utils/chapter_order.dart';
+import 'package:venera/utils/chapter_navigation.dart';
+import 'package:venera/components/chapter_order_button.dart';
 import 'package:venera/utils/reader_appearance.dart';
 import 'package:venera/utils/reader_page_layout.dart';
 import 'package:venera/utils/volume.dart';
@@ -396,7 +399,7 @@ class _ReaderState extends State<Reader>
         images == null ||
         images!.isEmpty ||
         page < maxPage ||
-        chapter < maxChapter) {
+        chapter != chapterSequence.lastChapter(widget.chapters)) {
       return;
     }
     _markedComplete = true;
@@ -526,38 +529,70 @@ class _ReaderState extends State<Reader>
     }
   }
 
-  bool get isFirstChapterOfGroup {
-    if (widget.chapters?.isGrouped ?? false) {
-      int c = chapter - 1;
-      int g = 1;
-      while (c > 0) {
-        c -= widget.chapters!.getGroupByIndex(g - 1).length;
-        g++;
-      }
-      if (c == 0) {
-        return true;
-      } else {
-        return false;
-      }
-    }
-    return chapter == 1;
+  ChapterOrder get chapterOrder => ChapterOrder.forComic(cid, type.sourceKey);
+
+  ChapterNavigation? _chapterNavigation;
+  int? _chapterNavigationIndex;
+
+  ChapterReadingOrder get chapterReadingOrder =>
+      ChapterReadingOrder.forComic(cid, type.sourceKey);
+
+  String get _chapterGroupKey {
+    final chapters = widget.chapters;
+    final first = chapters == null
+        ? 1
+        : ChapterNavigation.groupRange(chapters, chapter).$1;
+    return '$cid@${type.sourceKey}@$first';
   }
 
-  bool get isLastChapterOfGroup {
-    if (widget.chapters?.isGrouped ?? false) {
-      int c = chapter;
-      int g = 1;
-      while (c > 0) {
-        c -= widget.chapters!.getGroupByIndex(g - 1).length;
-        g++;
-      }
-      if (c == 0) {
-        return true;
-      } else {
-        return false;
-      }
+  ChapterSequence get chapterSequence {
+    final order = chapterReadingOrder;
+    final learned = appdata.settings['detectedChapterReadingOrder'];
+    return ChapterSequence(
+      descending:
+          order == ChapterReadingOrder.reverse ||
+          order == ChapterReadingOrder.automatic &&
+              learned is Map &&
+              learned[_chapterGroupKey] == true,
+    );
+  }
+
+  void resolveChapterNavigation() {
+    _chapterNavigationIndex = chapter;
+    _chapterNavigation = ChapterNavigation.fromCache(widget.chapters, chapter);
+    final descending = _chapterNavigation?.descendingFrom(chapter);
+    if (descending == null) return;
+    final saved = appdata.settings['detectedChapterReadingOrder'];
+    if (saved is Map && saved[_chapterGroupKey] == descending) return;
+    appdata.settings['detectedChapterReadingOrder'] = <String, dynamic>{
+      if (saved is Map) ...Map<String, dynamic>.from(saved),
+      _chapterGroupKey: descending,
+    };
+    appdata.saveData();
+  }
+
+  int? adjacentChapter({required bool forward}) {
+    if (chapterReadingOrder == ChapterReadingOrder.automatic &&
+        _chapterNavigationIndex == chapter &&
+        _chapterNavigation != null) {
+      return forward ? _chapterNavigation!.next : _chapterNavigation!.previous;
     }
-    return chapter == maxChapter;
+    return chapterSequence.adjacent(widget.chapters, chapter, forward: forward);
+  }
+
+  bool get isFirstChapterOfGroup => adjacentChapter(forward: false) == null;
+  bool get isLastChapterOfGroup => adjacentChapter(forward: true) == null;
+
+  @override
+  bool toNextChapter() {
+    final target = adjacentChapter(forward: true);
+    return target != null && toChapter(target);
+  }
+
+  @override
+  bool toPrevChapter({bool toLastPage = false}) {
+    final target = adjacentChapter(forward: false);
+    return target != null && toChapter(target, toLastPage: toLastPage);
   }
 
   /// Get the size of the reader.
@@ -766,6 +801,7 @@ abstract mixin class _ReaderLocation {
 
   /// Flag to indicate that the page should jump to the last page after images are loaded.
   bool _jumpToLastPageOnLoad = false;
+  bool _alignContinuousChapterEnd = false;
 
   int get page => _page;
 

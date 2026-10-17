@@ -441,6 +441,43 @@ void main() {
             tester.view.physicalSize = const Size(1000, 1000);
             await settle();
           }
+          // Directory display order must never reverse chapter navigation.
+          for (final displayOrder in [
+            'source',
+            'reverse',
+            'titleAscending',
+            'titleDescending',
+          ]) {
+            appdata.settings['comicChapterOrder'] = {
+              'direction@local': displayOrder,
+            };
+            state.toChapter(1);
+            await settle();
+            expect(state.isFirstChapterOfGroup, isTrue);
+            state.toPage(2, animate: false);
+            await settle();
+            await tester.tapAt(next);
+            await settle();
+            expect(
+              state.chapter,
+              2,
+              reason: 'next ignores $displayOrder in ${mode.key}',
+            );
+            expect(state.page, 1);
+            expect(state.isLastChapterOfGroup, isTrue);
+            await tester.tapAt(prev);
+            await settle();
+            expect(state.chapter, 1);
+            expect(state.page, 2);
+            await tester.dragFrom(rect.center, forwardSwipe);
+            await settle();
+            expect(
+              state.chapter,
+              2,
+              reason: 'swipe ignores $displayOrder in ${mode.key}',
+            );
+          }
+          appdata.settings['comicChapterOrder'] = <String, dynamic>{};
           expect(
             tester.takeException(),
             isNull,

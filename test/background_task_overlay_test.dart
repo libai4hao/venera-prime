@@ -400,7 +400,7 @@ void main() {
   });
 
   testWidgets(
-    'badge starts at the bottom corner and snaps to either corner without gesture-inset gaps',
+    'badge stays fully visible at both safe corners without gesture-inset gaps',
     (tester) async {
       tester.view.physicalSize = const Size(400, 800);
       tester.view.devicePixelRatio = 1;
@@ -426,7 +426,7 @@ void main() {
       final badge = find.byKey(const Key('background-task-badge'));
       await tester.pumpAndSettle();
       expect(tester.getRect(badge).bottom, 768);
-      expect(tester.getRect(badge).right, greaterThan(400));
+      expect(tester.getRect(badge).right, 400);
       expect(tester.getCenter(badge).dx, lessThan(400));
       final toTop = await tester.startGesture(tester.getCenter(badge));
       await toTop.moveTo(const Offset(40, 60));
@@ -434,14 +434,14 @@ void main() {
       await toTop.up();
       await tester.pumpAndSettle();
       expect(tester.getRect(badge).top, 24);
-      expect(tester.getRect(badge).left, lessThan(0));
+      expect(tester.getRect(badge).left, 0);
       final toBottom = await tester.startGesture(tester.getCenter(badge));
       await toBottom.moveTo(const Offset(360, 738));
       await tester.pump();
       await toBottom.up();
       await tester.pumpAndSettle();
       expect(tester.getRect(badge).bottom, 768);
-      expect(tester.getRect(badge).right, greaterThan(400));
+      expect(tester.getRect(badge).right, 400);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     },

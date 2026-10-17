@@ -613,10 +613,10 @@ class _ReaderScaffoldState extends State<_ReaderScaffold> {
               const SizedBox(width: 8),
               IconButton.filledTonal(
                 onPressed: () => !isReversed
-                    ? context.reader.chapter > 1
+                    ? !context.reader.isFirstChapterOfGroup
                           ? context.reader.toPrevChapter()
                           : context.reader.toPage(1)
-                    : context.reader.chapter < context.reader.maxChapter
+                    : !context.reader.isLastChapterOfGroup
                     ? context.reader.toNextChapter()
                     : context.reader.toPage(context.reader.maxPage),
                 icon: const Icon(Icons.first_page),
@@ -632,10 +632,10 @@ class _ReaderScaffoldState extends State<_ReaderScaffold> {
               Expanded(child: buildSlider()),
               IconButton.filledTonal(
                 onPressed: () => !isReversed
-                    ? context.reader.chapter < context.reader.maxChapter
+                    ? !context.reader.isLastChapterOfGroup
                           ? context.reader.toNextChapter()
                           : context.reader.toPage(context.reader.maxPage)
-                    : context.reader.chapter > 1
+                    : !context.reader.isFirstChapterOfGroup
                     ? context.reader.toPrevChapter()
                     : context.reader.toPage(1),
                 icon: const Icon(Icons.last_page),

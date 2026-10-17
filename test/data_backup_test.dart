@@ -62,6 +62,79 @@ List<int> _emptyDatabase(String path) {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
+    'exports committed rows from every live WAL database',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('prime-wal-');
+      App.dataPath = directory.path;
+      App.cachePath = '${directory.path}/cache';
+      Directory(App.cachePath).createSync();
+      final databases = <String, Database>{};
+      try {
+        for (final name in [
+          'history.db',
+          'local_favorite.db',
+          'read_later.db',
+          'reading_statistics.db',
+          'cookie.db',
+        ]) {
+          final db = sqlite3.open('${directory.path}/$name');
+          databases[name] = db;
+          db.execute('PRAGMA journal_mode = WAL;');
+          db.execute('PRAGMA wal_autocheckpoint = 0;');
+          db.execute('CREATE TABLE backup_probe (value TEXT);');
+          db.execute('PRAGMA wal_checkpoint(TRUNCATE);');
+          db.execute(
+            "INSERT INTO backup_probe VALUES ('latest-committed-row');",
+          );
+          expect(
+            File('${directory.path}/$name-wal').lengthSync(),
+            greaterThan(0),
+          );
+
+          // Prove that copying only the main file really loses the latest row.
+          final stale = File('${directory.path}/$name.stale');
+          stale.writeAsBytesSync(
+            File('${directory.path}/$name').readAsBytesSync(),
+          );
+          final mainOnly = sqlite3.open(stale.path);
+          try {
+            expect(mainOnly.select('SELECT * FROM backup_probe;'), isEmpty);
+          } finally {
+            mainOnly.dispose();
+          }
+        }
+        for (final sync in [true, false]) {
+          final backup = await exportAppData(sync);
+          final extracted = Directory('${App.cachePath}/snapshot-$sync');
+          await ArchiveSecurity.extract(backup, extracted);
+          for (final name in databases.keys) {
+            final snapshot = sqlite3.open('${extracted.path}/$name');
+            try {
+              expect(
+                snapshot.select('PRAGMA integrity_check;').single[0],
+                'ok',
+              );
+              expect(
+                snapshot.select('SELECT value FROM backup_probe;').single[0],
+                'latest-committed-row',
+                reason: '$name (sync=$sync)',
+              );
+            } finally {
+              snapshot.dispose();
+            }
+          }
+        }
+      } finally {
+        for (final db in databases.values) {
+          db.dispose();
+        }
+        await directory.delete(recursive: true);
+      }
+    },
+    skip: Platform.environment['PRIME_NATIVE_ZIP_TEST'] != '1',
+  );
+
+  test(
     'imports read later entries and preserves them for old backups',
     () async {
       final directory = await Directory.systemTemp.createTemp('venera-backup-');
