@@ -377,6 +377,41 @@ class BackupPreserved extends ComicSource {
       expect(manager.getAll().single.id, 'backup-id');
       expect(cookies.loadForRequest(uri).single.value, 'fixture-session');
 
+      final oldReadLater = sqlite3.open('${directory.path}/old-read-later.db');
+      oldReadLater.execute('''
+        CREATE TABLE read_later (
+          id TEXT NOT NULL, type INTEGER NOT NULL, title TEXT NOT NULL,
+          subtitle TEXT, cover TEXT NOT NULL, source_key TEXT NOT NULL,
+          added_time INTEGER NOT NULL, PRIMARY KEY (id, type)
+        );
+        INSERT INTO read_later VALUES
+          ('old-backup', 0, 'Old backup', NULL, 'cover', 'local', 123);
+      ''');
+      oldReadLater.dispose();
+      final legacySchemaBackup = await _archive(
+        '${directory.path}/legacy-schema.venera',
+        {
+          'history.db': _emptyDatabase('${directory.path}/legacy-history.db'),
+          'local_favorite.db': _emptyDatabase(
+            '${directory.path}/legacy-favorite.db',
+          ),
+          'appdata.json': utf8.encode(
+            jsonEncode({'settings': {}, 'searchHistory': []}),
+          ),
+          'read_later.db': File(
+            '${directory.path}/old-read-later.db',
+          ).readAsBytesSync(),
+        },
+      );
+      await importAppData(legacySchemaBackup);
+      expect(manager.getAll().single.id, 'old-backup');
+      App.closeComponents();
+      await App.initComponents();
+      expect(manager.getAll().single.id, 'old-backup');
+      expect(manager.add(_comic()), isTrue);
+      expect(manager.removeComic(_comic()), isTrue);
+      expect(cookies.loadForRequest(uri).single.value, 'fixture-session');
+
       final invalidManifestBackup = await _archive(
         '${directory.path}/invalid-manifest.venera',
         {
@@ -397,7 +432,7 @@ class BackupPreserved extends ComicSource {
         throwsA(isA<FormatException>()),
       );
 
-      manager.close();
+      App.closeComponents();
       cookies.dispose();
       SingleInstanceCookieJar.instance = null;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
