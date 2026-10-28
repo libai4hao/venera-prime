@@ -228,7 +228,10 @@ class LocalManager with ChangeNotifier {
   }
 
   // return error message if failed
-  Future<String?> setNewPath(String newPath) async {
+  Future<String?> setNewPath(
+    String newPath, {
+    bool adoptExisting = false,
+  }) async {
     if (_changingPath) {
       return "Storage path change already in progress";
     }
@@ -248,17 +251,26 @@ class LocalManager with ChangeNotifier {
     if (path_utils.isWithin(sourcePath, destinationPath)) {
       return "New storage path cannot be inside the current storage path";
     }
-    if (!await newDir.list().isEmpty) {
-      return "Directory is not empty";
-    }
     _changingPath = true;
     try {
-      await copyDirectoryIsolate(directory, newDir);
+      final isEmpty = await newDir.list().isEmpty;
+      if (!adoptExisting && !isEmpty) {
+        return "Directory is not empty";
+      }
+      // Taking over an existing directory keeps its files where they are and
+      // never deletes the previous folder; the move path still copies.
+      final adopting = adoptExisting && !isEmpty;
+      if (!adopting) {
+        await copyDirectoryIsolate(directory, newDir);
+      }
       await atomicWriteString(
         File(FilePath.join(App.dataPath, 'local_path')),
         newPath,
       );
-      await directory.deleteContents(recursive: true);
+      await _rewriteDirectoriesForOldPath(sourcePath);
+      if (!adopting) {
+        await directory.deleteContents(recursive: true);
+      }
       path = newPath;
       _checkNoMedia();
       return null;
@@ -267,6 +279,47 @@ class LocalManager with ChangeNotifier {
       return e.toString();
     } finally {
       _changingPath = false;
+    }
+  }
+
+  /// Rewrite stored `directory` values that point into a storage root that is
+  /// no longer current.
+  ///
+  /// `comics.directory` stores a name relative to the storage root for
+  /// downloads but an absolute path for comics imported from another folder,
+  /// so after the root moves those rows stop resolving. Only rows whose
+  /// directory resolves inside [oldRoot] are converted back to a relative name.
+  Future<void> _rewriteDirectoriesForOldPath(String oldRoot) async {
+    final root = path_utils.canonicalize(oldRoot);
+    if (root.isEmpty) return;
+    final rows = _db.select(
+      'SELECT id, directory FROM comics WHERE comic_type = ?;',
+      [ComicType.local.value],
+    );
+    var changed = 0;
+    for (final row in rows) {
+      final directory = row['directory'] as String;
+      if (!directory.contains('/') && !directory.contains('\\')) continue;
+      final candidate = path_utils.canonicalize(directory);
+      if (!path_utils.isWithin(root, candidate)) continue;
+      // Strip by segments instead of by substring: canonicalize() lowercases
+      // on Windows, so slicing the canonical path would lose the real name.
+      final rootSegments = path_utils.split(root).length;
+      final segments = path_utils.split(directory);
+      if (segments.length <= rootSegments) continue;
+      final normalized = segments.skip(rootSegments).join('/');
+      if (normalized == directory) continue;
+      _db.execute(
+        'UPDATE comics SET directory = ? WHERE id = ? AND comic_type = ?;',
+        [normalized, row['id'] as String, ComicType.local.value],
+      );
+      changed++;
+    }
+    if (changed > 0) {
+      Log.info(
+        'Local',
+        'Rewrote $changed comic directories to be relative to the new storage path',
+      );
     }
   }
 
