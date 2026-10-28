@@ -22,6 +22,14 @@ flutter test --no-pub             # 全量：84 个 test/*.dart（另 test/suppo
 flutter test --no-pub test/channel_test.dart test/reader_spread_test.dart
 ```
 
+来源身份体检 / 修复（背景见「架构约束」里的 hashCode 说明）：
+
+```sh
+dart tool/source_identity.dart verify  --data <dataPath>                     # 只读，有孤儿 exit 1
+dart tool/source_identity.dart recover --data <dataPath> --apply             # 默认 dry-run，--apply 才写
+dart tool/source_identity.dart recover --data <dataPath> --map 12345=comic_source_key
+```
+
 **CI 不跑测试，也不跑 analyze。** `.github/workflows/main.yml` 全篇只有 `python3 tool/check_version.py` 和各平台 `flutter build`。CI 绿灯不代表测试通过，本地跑。
 
 构建的真实入口（CI 用的不是裸 `flutter build`）：
@@ -61,6 +69,8 @@ flutter test --no-pub test/channel_test.dart test/reader_spread_test.dart
 
 - `lib/foundation/comic_source/comic_source.dart` 是一个 library + 5 个 `part`：`category` / `favorites` / `parser` / `models` / `types`（`:27-35`）。改这些子文件时它们**不能有自己的 import**，只能借主文件的 import；新增子文件要同步加 `part` 指令
 
+**漫画的来源身份是 `source.key.hashCode`，不是稳定 ID。** 所有落库的来源列（`history.type`、收藏夹表 `type`、`local.db/comics.comic_type`、`read_later.comic_type`、`reading_statistics.comic_type`）都是这个 int，本地库固定 `0`（`lib/foundation/comic_type.dart:32-38`、`lib/foundation/comic_source/comic_source.dart:287-289`）。反查是线性比较 hashCode（`comic_source.dart:51-52`）。后果：改源 `key`、或 Dart 版本/平台换了哈希算法，旧条目会退化成 `Unknown:<int>` 并失去更新/跳转能力。写迁移或导入代码时**不要把唯一的来源身份塞进 int**，能加 `source_key` 文本列就加（`read_later.db` 有，`history`/收藏夹没有）；修不回来时用 `tool/source_identity.dart`，它按 `read_later.source_key` → `image_favorites.source_key` → `folder_sync.source_key` → `downloading_tasks.json` 的顺序反推 key，再按当前运行时重算。
+
 **分层是约定，不是强制约束。**
 
 `lib/foundation/`（领域 / 存储 / 服务）、`lib/pages/`（60 个页面，大页面再拆子目录）、`lib/components/`（通用组件）、`lib/utils/`、`lib/network/`。边界已经漏了：`lib/foundation/comic_source/comic_source.dart:15-16` 反向 import 了 `lib/pages/` 的两个页面。新代码按目录语义放，不要为了"纯净"启动大重构。
@@ -96,3 +106,4 @@ flutter test --no-pub test/<相关>_test.dart
 - `doc/headless_doc.md` —— `--headless` CLI 模式（入口 `lib/main.dart:22`、`lib/headless.dart:17`）
 - `doc/source-check-reader-update.md` —— 验证命令配方与阅读器行为约定
 - `fast-coding-doc/入门指南.md` —— 上手路径、目录地图、任务对照表
+- `tool/source_identity.dart` —— 来源身份体检与修复，测试在 `test/source_identity_test.dart`
