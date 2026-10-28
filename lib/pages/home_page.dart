@@ -896,7 +896,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
       "Select an archive file (cbz, zip, 7z, cb7)".tl,
       "Select a directory which contains multiple archive files.".tl,
       "Select an EhViewer database and a download folder.".tl,
-      "Scan the current local path and restore the local database.".tl,
+      "Choose the old version download directory. It becomes the local storage path without copying files; only comics missing from the library are imported.".tl,
     ][type];
     List<String> importMethods = [
       "Single Comic".tl,

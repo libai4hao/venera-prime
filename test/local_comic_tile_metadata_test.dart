@@ -11,6 +11,10 @@ import 'package:venera/foundation/local.dart';
 import 'package:venera/utils/translations.dart';
 
 void main() {
+  setUpAll(() async {
+    await AppTranslation.init();
+  });
+
   testWidgets('local tile shows author, source, language and counts', (
     tester,
   ) async {
@@ -154,7 +158,6 @@ Future<void> _withLocalManager(
   WidgetTester tester,
   Future<void> Function() body,
 ) async {
-  await AppTranslation.init();
   final snapshot = Map<String, dynamic>.from(
     jsonDecode(jsonEncode(appdata.toJson())),
   );

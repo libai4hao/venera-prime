@@ -235,7 +235,20 @@ class DirectoryPicker {
 
   static const _methodChannel = MethodChannel("venera/method_channel");
 
-  Future<Directory?> pickDirectory({bool directAccess = false}) async {
+  bool _accessRetained = false;
+
+  /// Keep security-scoped access alive for the rest of this process. Call this
+  /// when the directory becomes a long-lived storage root.
+  void retainAccess() {
+    if (_accessRetained) return;
+    _accessRetained = true;
+    _finalizer.detach(this);
+  }
+
+  Future<Directory?> pickDirectory({
+    bool directAccess = false,
+    bool persistAccess = false,
+  }) async {
     IO._isSelectingFiles = true;
     try {
       String? directory;
@@ -260,7 +273,11 @@ class DirectoryPicker {
         );
       }
       if (directory == null) return null;
-      _finalizer.attach(this, directory);
+      if (persistAccess) {
+        retainAccess();
+      } else {
+        _finalizer.attach(this, directory);
+      }
       return Directory(directory);
     } finally {
       Future.delayed(const Duration(milliseconds: 100), () {
