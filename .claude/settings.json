@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter pub get:*)",
+      "Bash(flutter test:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(flutter doctor:*)",
+      "Bash(dart:*)",
+      "Bash(python:*)",
+      "Bash(adb:*)"
+    ]
+  },
+  "env": {
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "url.git@github.com:.insteadOf",
+    "GIT_CONFIG_VALUE_0": "https://github.com/"
+  }
+}

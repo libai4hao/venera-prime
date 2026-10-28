@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:venera/utils/io.dart' show overrideIO;
 
+import 'support/symlink_support.dart';
+
 void main() {
   test(
     'application IO overrides preserve native file and symlink types',
@@ -45,5 +47,9 @@ void main() {
         await directory.delete(recursive: true);
       }
     },
+    skip: canCreateSymlinks()
+        ? null
+        : 'Creating symlinks requires Developer Mode or '
+              'SeCreateSymbolicLinkPrivilege on Windows.',
   );
 }

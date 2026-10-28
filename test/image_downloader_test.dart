@@ -4,7 +4,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/cache_manager.dart';
+import 'package:venera/foundation/log.dart';
 import 'package:venera/network/images.dart';
+
+import 'support/temp_directory.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +17,7 @@ void main() {
     try {
       App.dataPath = root.path;
       App.cachePath = Directory('${root.path}/cache').path;
+      await CacheManager.instance?.close();
       CacheManager.instance = null;
       const url = 'http://127.0.0.1:1/must-not-be-requested.png';
       const cacheKey = '$url@null@comic@chapter';
@@ -32,8 +36,10 @@ void main() {
       expect(events, hasLength(1));
       expect(events.single.imageBytes, imageBytes);
     } finally {
+      await CacheManager.instance?.close();
       CacheManager.instance = null;
-      await root.delete(recursive: true);
+      await Log.close();
+      await deleteTempDirectory(root);
     }
   });
 }

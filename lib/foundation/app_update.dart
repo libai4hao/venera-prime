@@ -187,7 +187,11 @@ class AppUpdateDownloader {
       if (await target.exists()) await target.delete();
       return await partial.rename(target.path);
     } finally {
-      if (await partial.exists()) await partial.delete();
+      try {
+        if (await partial.exists()) await partial.delete();
+      } on PathNotFoundException {
+        // A concurrent cancellation path may have already removed it.
+      }
     }
   }
 }

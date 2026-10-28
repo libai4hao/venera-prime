@@ -7,12 +7,16 @@ import 'package:venera/components/custom_slider.dart';
 import 'package:venera/components/window_frame.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
+import 'package:venera/foundation/cache_manager.dart';
 import 'package:venera/foundation/comic_type.dart';
 import 'package:venera/foundation/favorites.dart';
 import 'package:venera/foundation/history.dart';
 import 'package:venera/foundation/local.dart';
+import 'package:venera/foundation/log.dart';
 import 'package:venera/pages/reader/reader.dart';
 import 'package:venera/utils/translations.dart';
+
+import 'support/temp_directory.dart';
 
 void main() {
   testWidgets(
@@ -153,10 +157,17 @@ void main() {
         ),
       );
       await tester.pump(const Duration(seconds: 2));
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
       local.close();
       LocalFavoritesManager().close();
       HistoryManager().close();
-      await tester.runAsync(() => root.delete(recursive: true));
+      await tester.runAsync(() async {
+        await CacheManager.instance?.close();
+        CacheManager.instance = null;
+        await Log.close();
+        await deleteTempDirectory(root);
+      });
     },
   );
 }

@@ -62,6 +62,7 @@ class AppWebview extends StatefulWidget {
       this.singlePage = false,
       this.onStarted,
       this.onLoadStop,
+      this.createDesktopEnvironment = true,
       super.key});
 
   final String initialUrl;
@@ -77,6 +78,11 @@ class AppWebview extends StatefulWidget {
   final void Function(InAppWebViewController controller)? onLoadStop;
 
   final bool singlePage;
+
+  /// Whether to create the desktop WebView environment on Windows hosts.
+  /// Widget tests use this to keep the platform-specific plugin out of the
+  /// test path while still exercising the proxy feature checks.
+  final bool createDesktopEnvironment;
 
   static WebViewEnvironment? webViewEnvironment;
 
@@ -115,7 +121,7 @@ class _AppWebviewState extends State<AppWebview> {
         }
       }
     }
-    if (!App.isWindows) {
+    if (!App.isWindows || !widget.createDesktopEnvironment) {
       return true;
     }
     AppWebview.webViewEnvironment = await WebViewEnvironment.create(

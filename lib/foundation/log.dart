@@ -105,6 +105,18 @@ class Log {
 
   static void clear() => _logs.clear();
 
+  /// Flushes and closes the log file.
+  ///
+  /// Tests and callers that remove their data directory on Windows must call
+  /// this first: an open log file prevents the directory from being deleted.
+  static Future<void> close() async {
+    final file = _file;
+    _file = null;
+    if (file == null) return;
+    await file.flush();
+    await file.close();
+  }
+
   @override
   String toString() {
     var res = "Logs\n\n";

@@ -11,6 +11,7 @@ import 'package:venera/components/background_tasks.dart';
 import 'package:venera/components/window_frame.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
+import 'package:venera/foundation/cache_manager.dart';
 import 'package:venera/foundation/background_tasks.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
 import 'package:venera/foundation/comic_type.dart';
@@ -18,10 +19,13 @@ import 'package:venera/foundation/favorites.dart';
 import 'package:venera/foundation/follow_updates.dart';
 import 'package:venera/foundation/history.dart';
 import 'package:venera/foundation/local.dart';
+import 'package:venera/foundation/log.dart';
 import 'package:venera/foundation/res.dart';
 import 'package:venera/pages/follow_updates_page.dart';
 import 'package:venera/utils/translations.dart';
 import 'package:venera/utils/data_sync.dart';
+
+import 'temp_directory.dart';
 
 class _Source implements ComicSource {
   @override
@@ -64,13 +68,30 @@ class _Source implements ComicSource {
 
 void registerFollowUpdatesTests() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  setUpAll(AppTranslation.init);
   var sequence = 0;
   const folder = 'Follow update fixture';
   final manager = LocalFavoritesManager();
   late Directory root;
+  late Directory coverRoot;
+  late File fixtureImage;
   late _Source source;
   late Map<String, dynamic> snapshot;
+
+  setUpAll(() async {
+    await AppTranslation.init();
+    // Keep the cover outside the per-test data directory. The image pipeline
+    // can keep it open after a test, which would block Windows directory
+    // deletion.
+    coverRoot = Directory.systemTemp.createTempSync('prime-follow-cover-');
+    fixtureImage = File('${coverRoot.path}/fixture.png')
+      ..writeAsBytesSync(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==',
+        ),
+      );
+  });
+
+  tearDownAll(() => deleteTempDirectory(coverRoot));
 
   Future<void> setup(WidgetTester tester) async {
     snapshot = Map<String, dynamic>.from(
@@ -112,13 +133,7 @@ void registerFollowUpdatesTests() {
     source = (await tester.runAsync(
       () async => _Source('follow-update-fixture-${sequence++}'),
     ))!;
-    final image = File('${root.path}/fixture.png')
-      ..writeAsBytesSync(
-        base64Decode(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==',
-        ),
-      );
-    source.cover = 'file://${image.path}';
+    source.cover = 'file://${fixtureImage.path}';
     ComicSourceManager().add(source);
     appdata.settings['followUpdatesFolder'] = folder;
     manager.addComic(
@@ -138,11 +153,18 @@ void registerFollowUpdatesTests() {
 
   Future<void> cleanup(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox());
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
     manager.close();
     HistoryManager().close();
     LocalManager().close();
     appdata.restoreMemorySnapshot(snapshot);
-    await tester.runAsync(() => root.delete(recursive: true));
+    await tester.runAsync(() async {
+      await CacheManager.instance?.close();
+      CacheManager.instance = null;
+      await Log.close();
+      await deleteTempDirectory(root);
+    });
   }
 
   Future<UpdateProgress> check(

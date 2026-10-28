@@ -5,11 +5,14 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:venera/foundation/app_update.dart';
 import 'package:venera/foundation/app_update_service.dart';
 import 'package:venera/foundation/background_tasks.dart';
 import 'package:venera/utils/io.dart' show overrideIO;
 import 'package:venera/utils/translations.dart';
+
+import 'support/symlink_support.dart';
 
 const _bytes = [1, 2, 3, 4];
 const _asset = ReleaseAsset(
@@ -334,7 +337,10 @@ void main() {
         expect(downloader.calls, 1);
         expect(validations, 2);
         expect(installs, 0);
-        expect(restored.readyFile!.path, initial.readyFile!.path);
+        expect(
+          p.normalize(restored.readyFile!.path),
+          p.normalize(initial.readyFile!.path),
+        );
       } finally {
         restoredTasks.dispose();
       }
@@ -470,6 +476,10 @@ void main() {
         await outside.delete(recursive: true);
       }
     },
+    skip: canCreateSymlinks()
+        ? null
+        : 'Creating symlinks requires Developer Mode or '
+              'SeCreateSymbolicLinkPrivilege on Windows.',
   );
 
   test('restoring a valid update keeps only its APK and metadata', () async {

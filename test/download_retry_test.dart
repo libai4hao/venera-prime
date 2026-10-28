@@ -10,6 +10,8 @@ import 'package:venera/network/download.dart';
 import 'package:venera/network/download_page.dart';
 import 'package:venera/utils/translations.dart';
 
+import 'support/symlink_support.dart';
+
 class _Source implements ComicSource {
   @override
   String get key => 'retry-test';
@@ -266,5 +268,9 @@ void main() {
       manager.close();
       await directory.delete(recursive: true);
     },
+    skip: canCreateSymlinks()
+        ? null
+        : 'Creating symlinks requires Developer Mode or '
+              'SeCreateSymbolicLinkPrivilege on Windows.',
   );
 }

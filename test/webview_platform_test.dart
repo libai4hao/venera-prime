@@ -85,7 +85,10 @@ void main() {
           await tester.pumpWidget(
             MaterialApp(
               navigatorKey: App.rootNavigatorKey,
-              home: const AppWebview(initialUrl: 'https://example.com/login'),
+              home: const AppWebview(
+                initialUrl: 'https://example.com/login',
+                createDesktopEnvironment: false,
+              ),
             ),
           );
           // The loading indicator animates until the native view loads; do not
