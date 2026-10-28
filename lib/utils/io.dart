@@ -285,6 +285,7 @@ class DirectoryPicker {
         // ios, macos
         directory = await _methodChannel.invokeMethod<String?>(
           "getDirectoryPath",
+          persistAccess ? {"persistent": true} : null,
         );
       }
       if (directory == null) return null;

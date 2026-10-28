@@ -7,6 +7,9 @@ import Foundation // 添加此行
 @objc class AppDelegate: FlutterAppDelegate, UIDocumentPickerDelegate {
   var flutterResult: FlutterResult?
   var directoryPath: URL!
+  private let storageBookmarkKey = "venera.localStorageBookmark"
+  private var persistentDirectoryPath: URL?
+  private var pickerRequestsPersistentAccess = false
 
   // 定义插件通道名称
   private var directoryPicker: DirectoryPicker?
@@ -40,10 +43,14 @@ import Foundation // 添加此行
         }
         result(nil)
       } else if call.method == "getDirectoryPath" {
+        let arguments = call.arguments as? [String: Any]
+        self.pickerRequestsPersistentAccess = arguments?["persistent"] as? Bool ?? false
         self.flutterResult = result
         self.getDirectoryPath()
       } else if call.method == "stopAccessingSecurityScopedResource" {
-        self.directoryPath?.stopAccessingSecurityScopedResource()
+        if self.directoryPath != self.persistentDirectoryPath {
+          self.directoryPath?.stopAccessingSecurityScopedResource()
+        }
         self.directoryPath = nil
         result(nil)
       } else if call.method == "selectDirectory" {
@@ -53,6 +60,8 @@ import Foundation // 添加此行
         result(FlutterMethodNotImplemented)
       }
     }
+
+    restorePersistentDirectoryBookmark()
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
@@ -79,9 +88,51 @@ import Foundation // 添加此行
     let success = self.directoryPath.startAccessingSecurityScopedResource()
 
     if success {
+      if self.pickerRequestsPersistentAccess {
+        self.persistDirectoryBookmark(self.directoryPath)
+      }
       flutterResult?(self.directoryPath.path)
     } else {
       flutterResult?(nil)
+    }
+  }
+
+  private func persistDirectoryBookmark(_ url: URL) {
+    do {
+      let bookmark = try url.bookmarkData(
+        options: .minimalBookmark,
+        includingResourceValuesForKeys: nil,
+        relativeTo: nil
+      )
+      UserDefaults.standard.set(bookmark, forKey: storageBookmarkKey)
+      if let current = persistentDirectoryPath, current != url {
+        current.stopAccessingSecurityScopedResource()
+      }
+      persistentDirectoryPath = url
+    } catch {
+      // Access remains valid for this session; a later pick can retry.
+    }
+  }
+
+  private func restorePersistentDirectoryBookmark() {
+    guard let bookmark = UserDefaults.standard.data(forKey: storageBookmarkKey) else {
+      return
+    }
+    var isStale = false
+    do {
+      let url = try URL(
+        resolvingBookmarkData: bookmark,
+        options: [],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+      )
+      guard url.startAccessingSecurityScopedResource() else { return }
+      persistentDirectoryPath = url
+      if isStale {
+        persistDirectoryBookmark(url)
+      }
+    } catch {
+      UserDefaults.standard.removeObject(forKey: storageBookmarkKey)
     }
   }
 
