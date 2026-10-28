@@ -23,6 +23,12 @@ import 'package:venera/utils/atomic_file.dart';
 import 'app.dart';
 import 'history.dart';
 
+String? _nonEmptyLanguage(Object? value) {
+  if (value is! String) return null;
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
 class LocalComic with HistoryMixin implements Comic {
   @override
   final String id;
@@ -62,6 +68,13 @@ class LocalComic with HistoryMixin implements Comic {
   /// Whether deleting this record is allowed to remove its files.
   final bool managedByApp;
 
+  /// Language code read from local metadata, when available.
+  @override
+  final String? language;
+
+  /// Total number of pages stored on disk, when known.
+  final int? pageCount;
+
   const LocalComic({
     required this.id,
     required this.title,
@@ -75,6 +88,8 @@ class LocalComic with HistoryMixin implements Comic {
     required this.downloadedChapters,
     required this.createdAt,
     this.managedByApp = true,
+    this.language,
+    this.pageCount,
   });
 
   LocalComic.fromRow(Row row)
@@ -93,7 +108,9 @@ class LocalComic with HistoryMixin implements Comic {
         jsonDecode(row['downloadedChapters'] as String),
       ),
       createdAt = DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
-      managedByApp = (row['managed_by_app'] as int? ?? 1) != 0;
+      managedByApp = (row['managed_by_app'] as int? ?? 1) != 0,
+      language = _nonEmptyLanguage(row['language']),
+      pageCount = row['page_count'] as int?;
 
   File get coverFile => File(FilePath.join(baseDir, cover));
 
@@ -179,9 +196,6 @@ class LocalComic with HistoryMixin implements Comic {
   String? get subTitle => subtitle;
 
   @override
-  String? get language => null;
-
-  @override
   String? get favoriteId => null;
 
   @override
@@ -193,8 +207,15 @@ class _LocalMetadata {
   final String? author;
   final String? description;
   final List<String>? tags;
+  final String? language;
 
-  const _LocalMetadata({this.title, this.author, this.description, this.tags});
+  const _LocalMetadata({
+    this.title,
+    this.author,
+    this.description,
+    this.tags,
+    this.language,
+  });
 }
 
 class LocalManager with ChangeNotifier {
@@ -352,6 +373,8 @@ class LocalManager with ChangeNotifier {
           downloadedChapters TEXT NOT NULL,
           created_at INTEGER,
           managed_by_app INTEGER NOT NULL DEFAULT 1,
+          language TEXT,
+          page_count INTEGER,
           PRIMARY KEY (id, comic_type)
       );
     ''');
@@ -377,6 +400,7 @@ class LocalManager with ChangeNotifier {
           cover TEXT NOT NULL, comic_type INTEGER NOT NULL,
           downloadedChapters TEXT NOT NULL, created_at INTEGER,
           managed_by_app INTEGER NOT NULL DEFAULT 1,
+          language TEXT, page_count INTEGER,
           PRIMARY KEY (id, comic_type)
         );
       ''');
@@ -391,6 +415,12 @@ class LocalManager with ChangeNotifier {
       _db.execute(
         'ALTER TABLE comics ADD COLUMN managed_by_app INTEGER NOT NULL DEFAULT 1;',
       );
+    }
+    if (!columns.any((row) => row['name'] == 'language')) {
+      _db.execute('ALTER TABLE comics ADD COLUMN language TEXT;');
+    }
+    if (!columns.any((row) => row['name'] == 'page_count')) {
+      _db.execute('ALTER TABLE comics ADD COLUMN page_count INTEGER;');
     }
     if (File(FilePath.join(App.dataPath, 'local_path')).existsSync()) {
       final pathFile = File(FilePath.join(App.dataPath, 'local_path'));
@@ -441,8 +471,9 @@ class LocalManager with ChangeNotifier {
     _db.execute(
       '''INSERT OR REPLACE INTO comics
          (id, title, subtitle, description, tags, directory, chapters, cover,
-          comic_type, downloadedChapters, created_at, managed_by_app)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);''',
+          comic_type, downloadedChapters, created_at, managed_by_app,
+          language, page_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);''',
       [
         id ?? comic.id,
         comic.title,
@@ -456,6 +487,8 @@ class LocalManager with ChangeNotifier {
         jsonEncode(downloaded.toList()),
         comic.createdAt.millisecondsSinceEpoch,
         comic.managedByApp ? 1 : 0,
+        comic.language,
+        comic.pageCount,
       ],
     );
     notifyListeners();
@@ -576,15 +609,22 @@ class LocalManager with ChangeNotifier {
       final existing = known[canonical];
       final imageFiles = await _imageFiles(entity);
       final chapterDirs = <Directory>[];
+      var chapterPageCount = 0;
       await for (final child in entity.list()) {
         if (child is Directory &&
             FileSystemEntity.typeSync(child.path, followLinks: false) !=
-                FileSystemEntityType.link &&
-            (await _imageFiles(child)).isNotEmpty) {
-          chapterDirs.add(child);
+                FileSystemEntityType.link) {
+          final chapterImages = await _imageFiles(child);
+          if (chapterImages.isNotEmpty) {
+            chapterDirs.add(child);
+            chapterPageCount += chapterImages.length;
+          }
         }
       }
       chapterDirs.sort((a, b) => naturalCompare(a.name, b.name));
+      final pageCount = chapterDirs.isEmpty
+          ? imageFiles.length
+          : chapterPageCount;
       final metadata = await _readLocalMetadata(entity);
       if (existing != null) {
         updated++;
@@ -613,6 +653,8 @@ class LocalManager with ChangeNotifier {
           ),
           createdAt: existing.createdAt,
           managedByApp: existing.managedByApp,
+          language: metadata?.language ?? existing.language,
+          pageCount: pageCount > 0 ? pageCount : existing.pageCount,
         );
         if (!_sameLocalMetadata(existing, refreshed)) {
           await add(refreshed);
@@ -639,6 +681,8 @@ class LocalManager with ChangeNotifier {
         comicType: ComicType.local,
         downloadedChapters: chapters?.ids.toList() ?? const [],
         createdAt: (await entity.stat()).modified,
+        language: metadata?.language,
+        pageCount: pageCount > 0 ? pageCount : null,
       );
       await add(comic);
       discovered++;
@@ -648,6 +692,71 @@ class LocalManager with ChangeNotifier {
     }
     notifyListeners();
     return LocalRefreshResult(discovered, updated, missing, false);
+  }
+
+  bool _metadataBackfillAttempted = false;
+
+  /// Fills language and page count for records created before these fields
+  /// existed. Runs once per session; imports and downloads populate them
+  /// directly.
+  Future<void> fillMissingMetadata() async {
+    if (_metadataBackfillAttempted || !isInitialized) return;
+    _metadataBackfillAttempted = true;
+    try {
+      var changed = false;
+      for (final comic in getComics(LocalSortType.timeDesc)) {
+        if (comic.language != null && comic.pageCount != null) continue;
+        final root = Directory(comic.baseDir);
+        if (!await root.exists()) continue;
+        final rootImages = await _imageFiles(root);
+        final chapterDirs = <Directory>[];
+        var chapterPageCount = 0;
+        await for (final entity in root.list()) {
+          if (entity is Directory &&
+              FileSystemEntity.typeSync(entity.path, followLinks: false) !=
+                  FileSystemEntityType.link) {
+            final images = await _imageFiles(entity);
+            if (images.isNotEmpty) {
+              chapterDirs.add(entity);
+              chapterPageCount += images.length;
+            }
+          }
+        }
+        final diskPageCount = chapterDirs.isEmpty
+            ? rootImages.length
+            : chapterPageCount;
+        final metadata = await _readLocalMetadata(root);
+        final language = comic.language ?? metadata?.language;
+        final pageCount =
+            comic.pageCount ?? (diskPageCount > 0 ? diskPageCount : null);
+        if (language == comic.language && pageCount == comic.pageCount) {
+          continue;
+        }
+        await add(
+          LocalComic(
+            id: comic.id,
+            title: comic.title,
+            subtitle: comic.subtitle,
+            descriptionText: comic.descriptionText,
+            tags: comic.tags,
+            directory: comic.directory,
+            chapters: comic.chapters,
+            cover: comic.cover,
+            comicType: comic.comicType,
+            downloadedChapters: comic.downloadedChapters,
+            createdAt: comic.createdAt,
+            managedByApp: comic.managedByApp,
+            language: language,
+            pageCount: pageCount,
+          ),
+        );
+        changed = true;
+      }
+      if (changed) notifyListeners();
+    } catch (e, s) {
+      _metadataBackfillAttempted = false;
+      Log.error('Local', 'Failed to fill local comic metadata: $e', s);
+    }
   }
 
   Future<_LocalMetadata?> _readLocalMetadata(Directory directory) async {
@@ -684,6 +793,8 @@ class LocalManager with ChangeNotifier {
             author: text('author') ?? text('Author'),
             description: text('description') ?? text('summary'),
             tags: tags,
+            language:
+                text('language') ?? text('Language') ?? text('LanguageISO'),
           );
         }
       } catch (_) {}
@@ -715,6 +826,9 @@ class LocalManager with ChangeNotifier {
               (nullableText(read('Writer')) ?? nullableText(read('Penciller'))),
           description: nullableText(read('Summary')),
           tags: genres,
+          language:
+              nullableText(read('LanguageISO')) ??
+              nullableText(read('Language')),
         );
       } catch (_) {}
     }
@@ -777,6 +891,8 @@ class LocalManager with ChangeNotifier {
         a.subtitle == b.subtitle &&
         a.descriptionText == b.descriptionText &&
         a.cover == b.cover &&
+        a.language == b.language &&
+        a.pageCount == b.pageCount &&
         _sameList(a.tags, b.tags) &&
         _sameList(a.downloadedChapters, b.downloadedChapters) &&
         jsonEncode(a.chapters?.toJson()) == jsonEncode(b.chapters?.toJson());
@@ -914,6 +1030,8 @@ class LocalManager with ChangeNotifier {
             downloadedChapters: comic.downloadedChapters,
             createdAt: comic.createdAt,
             managedByApp: comic.managedByApp,
+            language: comic.language,
+            pageCount: comic.pageCount,
           ),
         );
       }

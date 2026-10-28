@@ -27,6 +27,91 @@ ImageProvider? _findImageProvider(Comic comic) {
   return image;
 }
 
+/// Optional metadata rendered on a comic tile. Used by local library tiles
+/// where author, source, language and size are known locally.
+class ComicTileInfo {
+  final String? author;
+  final String? source;
+  final String? language;
+  final int? chapterCount;
+  final int? pageCount;
+
+  const ComicTileInfo({
+    this.author,
+    this.source,
+    this.language,
+    this.chapterCount,
+    this.pageCount,
+  });
+
+  bool get isNotEmpty =>
+      author != null ||
+      source != null ||
+      language != null ||
+      chapterCount != null ||
+      pageCount != null;
+
+  String get compactText {
+    return [
+      if (author != null) author!,
+      if (source != null) source!,
+      if (language != null) language!,
+      if (chapterCount != null) '$chapterCount ${"Chapters".tl}',
+      if (pageCount != null) '$pageCount ${"Pages".tl}',
+    ].join(' · ');
+  }
+}
+
+class _ComicInfoLine extends StatelessWidget {
+  const _ComicInfoLine({required this.info});
+
+  final ComicTileInfo info;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = context.colorScheme.onSurface.toOpacity(0.64);
+    final items = <Widget>[
+      if (info.source != null) _item(Icons.public, info.source!, color),
+      if (info.language != null) _item(Icons.translate, info.language!, color),
+      if (info.chapterCount != null)
+        _item(
+          Icons.menu_book_outlined,
+          '${info.chapterCount} ${"Chapters".tl}',
+          color,
+        ),
+      if (info.pageCount != null)
+        _item(
+          Icons.description_outlined,
+          '${info.pageCount} ${"Pages".tl}',
+          color,
+        ),
+    ];
+    if (items.isEmpty) return const SizedBox();
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Wrap(spacing: 10, runSpacing: 2, children: items),
+    );
+  }
+
+  Widget _item(IconData icon, String text, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 2),
+        Flexible(
+          child: Text(
+            text,
+            style: TextStyle(fontSize: 11, color: color),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class ComicTile extends StatelessWidget {
   const ComicTile({
     super.key,
@@ -37,6 +122,7 @@ class ComicTile extends StatelessWidget {
     this.onTap,
     this.onLongPressed,
     this.heroID,
+    this.info,
   });
 
   final Comic comic;
@@ -44,6 +130,8 @@ class ComicTile extends StatelessWidget {
   final bool enableLongPressed;
 
   final String? badge;
+
+  final ComicTileInfo? info;
 
   final List<MenuEntry>? menuOptions;
 
@@ -275,8 +363,9 @@ class ComicTile extends StatelessWidget {
                         : "[${comic.maxPage}P]${comic.title.replaceAll("\n", "")}",
                     subtitle: comic.subtitle ?? '',
                     description: comic.description,
-                    badge: badge ?? comic.language,
+                    badge: info != null ? badge : (badge ?? comic.language),
                     tags: comic.tags,
+                    info: info,
                     maxLines: 2,
                     enableTranslate:
                         ComicSource.find(
@@ -402,6 +491,19 @@ class ComicTile extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.w500),
                 ),
               ),
+              if (info != null && info!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 1, 4, 0),
+                  child: Text(
+                    info!.compactText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: context.colorScheme.onSurface.toOpacity(0.65),
+                    ),
+                  ),
+                ),
             ],
           ).paddingHorizontal(6).paddingVertical(8),
         );
@@ -535,6 +637,7 @@ class _ComicDescription extends StatelessWidget {
     this.maxLines = 2,
     this.tags,
     this.rating,
+    this.info,
   });
 
   final String title;
@@ -542,6 +645,7 @@ class _ComicDescription extends StatelessWidget {
   final String description;
   final String? badge;
   final List<String>? tags;
+  final ComicTileInfo? info;
   final int maxLines;
   final bool enableTranslate;
   final double? rating;
@@ -555,6 +659,8 @@ class _ComicDescription extends StatelessWidget {
         ?.where((element) => element.removeAllBlank != "")
         .map((e) => e.replaceAll("\n", " "))
         .toList();
+    final infoAuthor = info?.author?.replaceAll("\n", " ").trim();
+    final mutedColor = context.colorScheme.onSurface.toOpacity(0.7);
     var enableTranslate =
         App.locale.languageCode == 'zh' && this.enableTranslate;
     return Column(
@@ -567,17 +673,31 @@ class _ComicDescription extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           softWrap: true,
         ),
-        if (subtitle != "")
+        if (infoAuthor != null && infoAuthor.isNotEmpty)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.person_outline, size: 12, color: mutedColor),
+              const SizedBox(width: 3),
+              Flexible(
+                child: Text(
+                  infoAuthor.displayText,
+                  style: TextStyle(fontSize: 10.0, color: mutedColor),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          )
+        else if (subtitle != "")
           Text(
             displaySubtitle,
-            style: TextStyle(
-              fontSize: 10.0,
-              color: context.colorScheme.onSurface.toOpacity(0.7),
-            ),
+            style: TextStyle(fontSize: 10.0, color: mutedColor),
             maxLines: 1,
             softWrap: true,
             overflow: TextOverflow.ellipsis,
           ),
+        if (info != null) _ComicInfoLine(info: info!),
         const SizedBox(height: 4),
         if (displayTags != null && displayTags.isNotEmpty)
           Expanded(
@@ -758,6 +878,7 @@ class SliverGridComics extends StatefulWidget {
     required this.comics,
     this.onLastItemBuild,
     this.badgeBuilder,
+    this.infoBuilder,
     this.menuBuilder,
     this.onTap,
     this.onLongPressed,
@@ -775,6 +896,8 @@ class SliverGridComics extends StatefulWidget {
   final void Function()? onLastItemBuild;
 
   final String? Function(Comic)? badgeBuilder;
+
+  final ComicTileInfo? Function(Comic)? infoBuilder;
 
   final List<MenuEntry> Function(Comic)? menuBuilder;
 
@@ -868,6 +991,7 @@ class _SliverGridComics extends StatelessWidget {
     required this.heroIDs,
     this.onLastItemBuild,
     this.badgeBuilder,
+    this.infoBuilder,
     this.menuBuilder,
     this.onTap,
     this.onLongPressed,
@@ -886,6 +1010,8 @@ class _SliverGridComics extends StatelessWidget {
   final void Function()? onLastItemBuild;
 
   final String? Function(Comic)? badgeBuilder;
+
+  final ComicTileInfo? Function(Comic)? infoBuilder;
 
   final List<MenuEntry> Function(Comic)? menuBuilder;
 
@@ -907,6 +1033,7 @@ class _SliverGridComics extends StatelessWidget {
         var comic = ComicTile(
           comic: comics[index],
           badge: badge,
+          info: infoBuilder?.call(comics[index]),
           menuOptions: menuBuilder?.call(comics[index]),
           onTap: onTap != null
               ? () => onTap!(comics[index], heroIDs[index])

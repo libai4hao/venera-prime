@@ -179,6 +179,8 @@ class ComicDetails with HistoryMixin {
 
   final String? url;
 
+  final String? language;
+
   final double? stars;
 
   @override
@@ -218,6 +220,7 @@ class ComicDetails with HistoryMixin {
         uploadTime = json["uploadTime"],
         updateTime = json["updateTime"],
         url = json["url"],
+        language = json["language"],
         stars = (json["stars"] as num?)?.toDouble(),
         maxPage = json["maxPage"],
         comments = (json["comments"] as List?)
@@ -245,6 +248,7 @@ class ComicDetails with HistoryMixin {
       "uploadTime": uploadTime,
       "updateTime": updateTime,
       "url": url,
+      "language": language,
     };
   }
 

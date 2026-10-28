@@ -58,13 +58,14 @@ void main() {
     final comic = manager.find('1', ComicType.local);
     expect(comic, isNotNull);
     expect(comic!.description, isEmpty);
+    expect(comic.language, isNull);
+    expect(comic.pageCount, isNull);
     final migratedDb = sqlite3.open('${directory.path}/local.db');
-    expect(
-      migratedDb
-          .select('PRAGMA table_info(comics);')
-          .any((row) => row['name'] == 'description'),
-      isTrue,
-    );
+    final columns = migratedDb
+        .select('PRAGMA table_info(comics);')
+        .map((row) => row['name'])
+        .toSet();
+    expect(columns, containsAll(['description', 'language', 'page_count']));
     migratedDb.dispose();
     manager.close();
     await directory.delete(recursive: true);

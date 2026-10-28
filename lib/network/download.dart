@@ -1007,6 +1007,8 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       comicType: ComicType(source.key.hashCode),
       downloadedChapters: _downloadedChapterIds(),
       createdAt: DateTime.now(),
+      language: comic?.language,
+      pageCount: _totalCount > 0 ? _totalCount : null,
     );
   }
 
@@ -1500,8 +1502,33 @@ class ArchiveDownloadTask extends DownloadTask {
     return files.first.name;
   }
 
+  int _countPages() {
+    try {
+      const imageExtensions = {
+        'jpg',
+        'jpeg',
+        'png',
+        'webp',
+        'gif',
+        'jpe',
+        'avif',
+        'bmp',
+      };
+      return Directory(path!).listSync(recursive: true).whereType<File>().where(
+        (file) {
+          final name = file.name.toLowerCase();
+          return !name.startsWith('cover.') &&
+              imageExtensions.contains(file.extension.toLowerCase());
+        },
+      ).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   @override
   LocalComic toLocalComic() {
+    final pageCount = _countPages();
     return LocalComic(
       id: comic.id,
       title: title,
@@ -1515,6 +1542,8 @@ class ArchiveDownloadTask extends DownloadTask {
       comicType: ComicType(source.key.hashCode),
       downloadedChapters: [],
       createdAt: DateTime.now(),
+      language: comic.language,
+      pageCount: pageCount > 0 ? pageCount : null,
     );
   }
 }

@@ -22,12 +22,15 @@ class ComicMetaData {
 
   final List<ComicChapter>? chapters;
 
+  final String language;
+
   Map<String, dynamic> toJson() => {
     'title': title,
     'author': author,
     'description': description,
     'tags': tags,
     'chapters': chapters?.map((e) => e.toJson()).toList(),
+    if (language.isNotEmpty) 'language': language,
   };
 
   ComicMetaData.fromJson(Map<String, dynamic> json)
@@ -35,6 +38,9 @@ class ComicMetaData {
       author = (json['author'] ?? json['作者'] ?? json['Author'] ?? '')
           .toString(),
       description = (json['description'] ?? json['summary'] ?? '').toString(),
+      language =
+          (json['language'] ?? json['Language'] ?? json['LanguageISO'] ?? '')
+              .toString(),
       tags = (json['tags'] is List
           ? (json['tags'] as List).map((e) => e.toString()).toList()
           : json['tags'] is String
@@ -52,6 +58,7 @@ class ComicMetaData {
     required this.tags,
     this.description = '',
     this.chapters,
+    this.language = '',
   });
 
   static ComicMetaData fromComicInfoXml(
@@ -83,6 +90,9 @@ class ComicMetaData {
       description: read('Summary'),
       tags: genres,
       chapters: _parseChapterNotes(notes),
+      language: read('LanguageISO').isEmpty
+          ? read('Language')
+          : read('LanguageISO'),
     );
   }
 
@@ -321,6 +331,8 @@ abstract class CBZ {
       downloadedChapters: cpMap?.keys.toList() ?? [],
       cover: 'cover.${coverFile.extension}',
       createdAt: DateTime.now(),
+      language: metaData.language.isEmpty ? null : metaData.language,
+      pageCount: files.length > 0 ? files.length : null,
     );
     return comic;
   }
@@ -381,6 +393,7 @@ abstract class CBZ {
       description: comic.description,
       tags: comic.tags,
       chapters: chapters,
+      language: comic.language ?? '',
     );
     await File(
       FilePath.join(cache.path, 'metadata.json'),
@@ -418,6 +431,12 @@ abstract class CBZ {
         tags = tags.sublist(0, 5);
       }
       buffer.writeln('  <Genre>${_escapeXml(tags.join(', '))}</Genre>');
+    }
+
+    if (data.language.isNotEmpty) {
+      buffer.writeln(
+        '  <LanguageISO>${_escapeXml(data.language)}</LanguageISO>',
+      );
     }
 
     if (data.chapters != null && data.chapters!.isNotEmpty) {

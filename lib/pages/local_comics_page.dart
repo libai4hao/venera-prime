@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:venera/components/components.dart';
 import 'package:venera/foundation/app.dart';
@@ -36,6 +38,38 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
 
   Map<LocalComic, bool> selectedComics = {};
 
+  ComicTileInfo? _buildTileInfo(LocalComic comic) {
+    final author = comic.subtitle.replaceAll('\n', ' ').trim();
+    final language = comic.language?.trim();
+    final chapterCount = comic.chapters == null
+        ? null
+        : (comic.downloadedChapters.isNotEmpty
+            ? comic.downloadedChapters.length
+            : comic.chapters!.length);
+    final info = ComicTileInfo(
+      author: author.isEmpty ? null : author,
+      source: _sourceLabel(comic),
+      language: language == null || language.isEmpty ? null : language,
+      chapterCount: chapterCount,
+      pageCount: comic.pageCount,
+    );
+    return info.isNotEmpty ? info : null;
+  }
+
+  String? _sourceLabel(LocalComic comic) {
+    if (comic.comicType == ComicType.local) {
+      return 'Local'.tl;
+    }
+    final name = comic.comicType.comicSource?.name.trim();
+    if (name != null && name.isNotEmpty) {
+      return name;
+    }
+    if (comic.sourceKey.startsWith('Unknown:')) {
+      return 'Unknown'.tl;
+    }
+    return comic.sourceKey;
+  }
+
   void update() {
     if (keyword.isEmpty) {
       setState(() {
@@ -54,6 +88,7 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
     sortType = LocalSortType.fromString(sort);
     comics = LocalManager().getComics(sortType);
     LocalManager().addListener(update);
+    unawaited(LocalManager().fillMissingMetadata());
     super.initState();
   }
 
@@ -297,6 +332,7 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
           SliverGridComics(
             comics: comics,
             selections: selectedComics,
+            infoBuilder: (c) => c is LocalComic ? _buildTileInfo(c) : null,
             onLongPressed: (c, heroID) {
               setState(() {
                 multiSelectMode = true;

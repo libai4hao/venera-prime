@@ -25,6 +25,9 @@ void main() {
       final chapterDirectory = Directory('${comicDirectory.path}/1')
         ..createSync();
       File('${chapterDirectory.path}/1.jpg').writeAsBytesSync([1]);
+      File(
+        '${comicDirectory.path}/metadata.json',
+      ).writeAsStringSync('{"language": "ja"}');
 
       final manager = LocalManager();
       manager.close();
@@ -52,6 +55,8 @@ void main() {
         '2': 'Chapter 2',
       });
       expect(refreshed.downloadedChapters, ['1']);
+      expect(refreshed.language, 'ja');
+      expect(refreshed.pageCount, 1);
 
       manager.close();
       await directory.delete(recursive: true);
@@ -99,6 +104,53 @@ void main() {
     }
     expect(comicDirectory.existsSync(), isFalse);
     expect(manager.find('network-id', const ComicType(123)), isNull);
+
+    manager.close();
+    await directory.delete(recursive: true);
+  });
+
+  test('fills missing language and page count for existing records', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'venera-local-backfill-',
+    );
+    final localDirectory = Directory('${directory.path}/local')
+      ..createSync(recursive: true);
+    App.dataPath = directory.path;
+    File('${directory.path}/local_path').writeAsStringSync(localDirectory.path);
+
+    final comicDirectory = Directory('${localDirectory.path}/legacy-comic')
+      ..createSync();
+    final chapterDirectory = Directory('${comicDirectory.path}/1')
+      ..createSync();
+    File('${chapterDirectory.path}/1.jpg').writeAsBytesSync([1]);
+    File('${chapterDirectory.path}/2.jpg').writeAsBytesSync([1]);
+    File(
+      '${comicDirectory.path}/metadata.json',
+    ).writeAsStringSync('{"language": "en"}');
+
+    final manager = LocalManager();
+    manager.close();
+    await manager.init();
+    await manager.add(
+      LocalComic(
+        id: 'legacy',
+        title: 'Legacy comic',
+        subtitle: 'Author',
+        tags: [],
+        directory: 'legacy-comic',
+        chapters: ComicChapters({'1': 'Chapter 1'}),
+        cover: '1/1.jpg',
+        comicType: ComicType.local,
+        downloadedChapters: ['1'],
+        createdAt: DateTime.utc(2026, 1, 1),
+      ),
+    );
+
+    await manager.fillMissingMetadata();
+    final filled = manager.find('legacy', ComicType.local);
+    expect(filled, isNotNull);
+    expect(filled!.language, 'en');
+    expect(filled.pageCount, 2);
 
     manager.close();
     await directory.delete(recursive: true);
