@@ -1,8 +1,9 @@
-name: Build Flutter Windows (x64 & ARM64)
+name: B:ild Flutter Windows (x64 & ARM64)
 
 on:
   push:
     branches: [ main, CC_vibe_coding ] # 根据你的主分支调整
+    tags: [ 'v*' ]
   workflow_dispatch: # 允许手动触发
 
 jobs:
