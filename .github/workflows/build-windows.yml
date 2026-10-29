@@ -1,139 +1,147 @@
-name: B:ild Flutter Windows (x64 & ARM64)
+name: Build & Release Windows (x64 & ARM64)
 
 on:
   push:
-    branches: [ main, CC_vibe_coding ] # 根据你的主分支调整
+    branches: [ main, CC_vibe_coding ]
     tags: [ 'v*' ]
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-x64:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: . # 如果你的 Flutter 项目在子目录，请修改此路径
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Setup Flutter
+      - name: Setup Flutter (x64)
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           architecture: 'x64'
-          cache: true # 缓存 Flutter SDK，加速后续构建
+          cache: true
 
-      - name: Enable Windows Desktop
-        run: flutter config --enable-windows-desktop
-
-      - name: Install Inno Setup & Dependencies
+      - name: Install dependencies
         run: |
-          # 安装 Inno Setup，choco 在 CI 中比 winget 更可靠
           choco install innosetup -y --no-progress
-          # 确保 iscc 在 PATH 中 (choco 通常会自动处理，但显式添加更稳妥)
-          $innoPath = "C:\Program Files (x86)\Inno Setup 6"
-          if (Test-Path $innoPath) { echo "$innoPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
-          # 安装 Python 依赖
           pip install httpx
 
-      - name: Download ChineseSimplified.isl (如果不存在)
-        run: |
-          $islPath = "windows/ChineseSimplified.isl"
-          if (-not (Test-Path $islPath)) {
-            Invoke-WebRequest -Uri "https://cdn.jsdelivr.net/gh/kira-96/Inno-Setup-Chinese-Simplified-Translation@latest/ChineseSimplified.isl" -OutFile $islPath
-          }
-
-      - name: Verify Flutter Build Output (Pre-check)
+      - name: Download ChineseSimplified.isl (if missing)
         shell: pwsh
         run: |
-          # 在构建前检查项目结构，确保关键文件存在
-          if (-not (Test-Path "pubspec.yaml")) { throw "pubspec.yaml not found" }
-          if (-not (Test-Path "windows/build.iss")) { throw "windows/build.iss not found" }
-          Write-Host "✅ Project structure looks good."
+          if (-not (Test-Path "windows/ChineseSimplified.isl")) {
+            Invoke-WebRequest -Uri "https://cdn.jsdelivr.net/gh/kira-96/Inno-Setup-Chinese-Simplified-Translation@latest/ChineseSimplified.isl" -OutFile "windows/ChineseSimplified.isl"
+          }
 
       - name: Build with custom script (x64)
         shell: pwsh
-        run: |
-          # 使用你的 build.py 脚本进行完整构建（包含打包和安装包生成）
-          python windows/build.py
-          # 检查构建是否真的成功
-          $exePath = "build\windows\x64\runner\Release\venera.exe"
-          if (-not (Test-Path $exePath)) {
-            throw "❌ Flutter build failed: venera.exe not found at $exePath"
-          }
-          Write-Host "✅ x64 Build completed successfully."
+        run: python windows/build.py
 
-      - name: Upload x64 Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Verify x64 build output
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "build\windows\x64\runner\Release\venera.exe")) {
+            throw "x64 build failed: venera.exe not found."
+          }
+
+      - name: Create portable ZIP (x64)
+        shell: pwsh
+        run: |
+          $portableDir = "build/windows/x64/runner/Release"
+          $version = (Get-Content pubspec.yaml | Select-String '^version:\s*(.+)$').Matches.Groups[1].Value -replace '\+.*$'
+          $zipPath = "build/windows/Venera-Prime-$version-windows-x64-portable.zip"
+          Compress-Archive -Path "$portableDir\*" -DestinationPath $zipPath -Force
+          Write-Host "Portable ZIP created: $zipPath"
+
+      - name: Upload x64 artifacts
+        uses: actions/upload-artifact@v6
         with:
-          name: venera-prime-windows-x64
+          name: windows-x64
           path: |
             build/windows/x64/runner/Release/
             build/windows/Venera-Prime-*-windows-installer.exe
-          if-no-files-found: error # 如果找不到文件则直接报错，避免静默失败
-          retention-days: 7
+            build/windows/Venera-Prime-*-windows-x64-portable.zip
+          if-no-files-found: error
 
   build-arm64:
-    runs-on: windows-latest
-    # 仅在手动触发或特定条件下运行 ARM64 构建（可选）
-    if: github.event_name == 'workflow_dispatch'
-    defaults:
-      run:
-        working-directory: .
-
+    runs-on: windows-11-arm
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Setup Flutter (ARM64)
+      - name: Setup Flutter (ARM64, master channel)
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
-          architecture: 'arm64' # 关键：指定 ARM64 架构
+          channel: 'master'          # 关键：只有 master 频道支持 Windows ARM64
+          architecture: 'arm64'
           cache: true
 
-      - name: Enable Windows Desktop
-        run: flutter config --enable-windows-desktop
-
-      - name: Install Inno Setup & Dependencies
+      - name: Install dependencies
         run: |
           choco install innosetup -y --no-progress
-          $innoPath = "C:\Program Files (x86)\Inno Setup 6"
-          if (Test-Path $innoPath) { echo "$innoPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
           pip install httpx
 
-      - name: Download ChineseSimplified.isl (如果不存在)
-        run: |
-          $islPath = "windows/ChineseSimplified.isl"
-          if (-not (Test-Path $islPath)) {
-            Invoke-WebRequest -Uri "https://cdn.jsdelivr.net/gh/kira-96/Inno-Setup-Chinese-Simplified-Translation@latest/ChineseSimplified.isl" -OutFile $islPath
-          }
-
-      - name: Verify Flutter Build Output (Pre-check)
+      - name: Download ChineseSimplified.isl (if missing)
         shell: pwsh
         run: |
-          if (-not (Test-Path "pubspec.yaml")) { throw "pubspec.yaml not found" }
-          if (-not (Test-Path "windows/build_arm64.iss")) { throw "windows/build_arm64.iss not found" }
+          if (-not (Test-Path "windows/ChineseSimplified.isl")) {
+            Invoke-WebRequest -Uri "https://cdn.jsdelivr.net/gh/kira-96/Inno-Setup-Chinese-Simplified-Translation@latest/ChineseSimplified.isl" -OutFile "windows/ChineseSimplified.isl"
+          }
 
       - name: Build with custom script (ARM64)
         shell: pwsh
-        run: |
-          # 确保你的 build_arm64.py 脚本能正确处理 ARM64 构建
-          # 注意：flutter build windows --release 需要能识别 ARM64 目标
-          python windows/build_arm64.py
-          $exePath = "build\windows\arm64\runner\Release\venera.exe"
-          if (-not (Test-Path $exePath)) {
-            throw "❌ ARM64 build failed: venera.exe not found at $exePath"
-          }
-          Write-Host "✅ ARM64 Build completed successfully."
+        run: python windows/build_arm64.py
 
-      - name: Upload ARM64 Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Verify ARM64 build output
+        shell: pwsh
+        run: |
+          $exe = "build\windows\arm64\runner\Release\venera.exe"
+          if (-not (Test-Path $exe)) {
+            throw "ARM64 build failed: venera.exe not found."
+          }
+          Write-Host "ARM64 executable found: $exe"
+
+      - name: Create portable ZIP (ARM64)
+        shell: pwsh
+        run: |
+          $portableDir = "build/windows/arm64/runner/Release"
+          $version = (Get-Content pubspec.yaml | Select-String '^version:\s*(.+)$').Matches.Groups[1].Value -replace '\+.*$'
+          $zipPath = "build/windows/Venera-Prime-$version-windows-arm64-portable.zip"
+          Compress-Archive -Path "$portableDir\*" -DestinationPath $zipPath -Force
+          Write-Host "Portable ZIP created: $zipPath"
+
+      - name: Upload ARM64 artifacts
+        uses: actions/upload-artifact@v6
         with:
-          name: venera-prime-windows-arm64
+          name: windows-arm64
           path: |
             build/windows/arm64/runner/Release/
             build/windows/Venera-Prime-*-windows-arm64-installer.exe
+            build/windows/Venera-Prime-*-windows-arm64-portable.zip
           if-no-files-found: error
-          retention-days: 7
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ build-x64, build-arm64 ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            artifacts/windows-x64/Venera-Prime-*-windows-installer.exe
+            artifacts/windows-x64/Venera-Prime-*-windows-x64-portable.zip
+            artifacts/windows-arm64/Venera-Prime-*-windows-arm64-installer.exe
+            artifacts/windows-arm64/Venera-Prime-*-windows-arm64-portable.zip
+          draft: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
