@@ -252,6 +252,14 @@ class DirectoryPicker {
 
   bool _accessRetained = false;
 
+  /// Whether this picker's security-scoped access must outlive its instance.
+  bool get accessRetained => _accessRetained;
+
+  /// Arguments sent to the iOS/macOS picker when the directory will become a
+  /// long-lived storage root.
+  static Map<String, Object>? persistentAccessArguments(bool persist) =>
+      persist ? const {"persistent": true} : null;
+
   /// Keep security-scoped access alive for the rest of this process. Call this
   /// when the directory becomes a long-lived storage root.
   void retainAccess() {
@@ -285,7 +293,7 @@ class DirectoryPicker {
         // ios, macos
         directory = await _methodChannel.invokeMethod<String?>(
           "getDirectoryPath",
-          persistAccess ? {"persistent": true} : null,
+          persistentAccessArguments(persistAccess),
         );
       }
       if (directory == null) return null;
