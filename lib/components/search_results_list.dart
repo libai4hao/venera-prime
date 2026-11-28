@@ -43,6 +43,7 @@ class _SearchResultsListState extends State<SearchResultsList> {
   int? _reported;
   bool _reportScheduled = false;
   bool get _continuous => appdata.settings['comicListDisplayMode'] != 'paging';
+  static const _maxRestorePages = 5;
   int get _lastPage => _data.isEmpty ? 0 : _data.keys.reduce(math.max);
 
   @override
@@ -119,8 +120,12 @@ class _SearchResultsListState extends State<SearchResultsList> {
           }
         }
       } else if (widget.loadNext != null) {
+        final cap = _data.isEmpty
+            ? math.min(requested, _maxRestorePages)
+            : requested;
         while (_data[requested] == null &&
-            (_maxPage == null || _lastPage < _maxPage!)) {
+            (_maxPage == null || _lastPage < _maxPage!) &&
+            _lastPage < cap) {
           final previous = _next;
           final result = await widget.loadNext!(previous);
           if (!mounted || generation != _generation) return;
@@ -140,9 +145,12 @@ class _SearchResultsListState extends State<SearchResultsList> {
         }
         if (!_data.containsKey(requested)) {
           _page = _firstPage = math.max(1, _lastPage);
-          _notice =
-              'The saved page is no longer available. Showing the last page.'
-                  .tl;
+          _notice = (_maxPage == null && requested > _lastPage)
+              ? 'This source cannot jump ahead. Showing page @page.'.tlParams({
+                  'page': '$_lastPage',
+                })
+              : 'The saved page is no longer available. Showing the last page.'
+                    .tl;
         }
       } else {
         throw StateError('Search is unavailable');
@@ -154,6 +162,16 @@ class _SearchResultsListState extends State<SearchResultsList> {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
         _scheduleReport();
+        if (_continuous &&
+            widget.loadNext != null &&
+            _error == null &&
+            _data[requested]?.isEmpty == true &&
+            _next != null &&
+            (_maxPage == null || _lastPage < _maxPage!)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) unawaited(_load(requested + 1));
+          });
+        }
       }
     }
   }
