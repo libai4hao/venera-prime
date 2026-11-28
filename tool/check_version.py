@@ -66,7 +66,10 @@ if 'Text("V${App.version}"' not in about_source:
 
 release_tag = os.environ.get("RELEASE_TAG", "").strip()
 if release_tag:
-    tag_version = release_tag.removeprefix("v").removeprefix("V")
+    # Fork releases use the `m` prefix; `v` stays accepted for upstream tags.
+    tag_version = release_tag
+    for prefix in ("m", "M", "v", "V"):
+        tag_version = tag_version.removeprefix(prefix)
     if tag_version != pubspec_base_version:
         fail(
             "Release tag mismatch: "
@@ -85,5 +88,5 @@ output_path = os.environ.get("GITHUB_OUTPUT")
 if output_path:
     with open(output_path, "a", encoding="utf-8") as output:
         output.write(f"version={pubspec_base_version}\n")
-        output.write(f"tag=v{pubspec_base_version}\n")
+        output.write(f"tag=m{pubspec_base_version}\n")
         output.write(f"notes=doc/release-{pubspec_base_version}.md\n")
