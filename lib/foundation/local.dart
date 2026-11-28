@@ -929,7 +929,9 @@ class LocalManager with ChangeNotifier {
     final marker = dir.joinFile('.venera_download.json');
     if (!await marker.exists()) return false;
     return !_inLibrary(dir.path) &&
-        !downloadingTasks.any((task) => task.path == dir.path);
+        !downloadingTasks.any(
+          (task) => task.path != null && path_utils.equals(task.path!, dir.path),
+        );
   }
 
   Future<List<Directory>> abandonedDownloads() async {

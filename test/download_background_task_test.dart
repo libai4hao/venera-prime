@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as path_utils;
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/background_tasks.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
@@ -130,7 +131,10 @@ void main() {
       expect(added.existsSync(), false);
       expect(old.readAsBytesSync(), [1]);
       expect(marker.existsSync(), true);
-      expect((await manager.abandonedDownloads()).single.path, dir.path);
+      expect(
+        path_utils.equals((await manager.abandonedDownloads()).single.path, dir.path),
+        isTrue,
+      );
       expect((await manager.refresh()).discovered, 0);
       await manager.deleteAbandonedDownload(dir);
       expect(dir.existsSync(), false);

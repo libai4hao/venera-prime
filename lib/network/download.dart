@@ -504,6 +504,16 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
 
   List<String> _verifiedChapters = [];
 
+  /// Pages confirmed on disk by the last scan, when one has run.
+  int? _pagesOnDiskCount;
+
+  void _rememberPagesOnDisk(Map<String, Set<int>> pages) {
+    _pagesOnDiskCount = pages.values.fold<int>(
+      0,
+      (total, indexes) => total + indexes.length,
+    );
+  }
+
   String? _downloadCompletionError(Map<String, Set<int>> pagesOnDisk) {
     var images = _images;
     if (images == null || images.isEmpty) {
@@ -780,6 +790,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       _refreshTotalCount();
     }
     final scanned = await _scanChapters();
+    _rememberPagesOnDisk(scanned);
     _downloadedCount = scanned.values.fold(
       0,
       (total, pages) => total + pages.length,
@@ -833,6 +844,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
     }
 
     final verified = await _scanChapters();
+    _rememberPagesOnDisk(verified);
     if (!_isRunning) return;
     var completionError = _downloadCompletionError(verified);
     if (completionError != null) {
@@ -961,7 +973,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
   /// Pages actually present on disk, falling back to the planned total when
   /// the page manifest is no longer available.
   int? _storedPageCount() {
-    final stored = _countDownloadedPagesOnDisk();
+    final stored = _pagesOnDiskCount ?? 0;
     if (stored > 0) return stored;
     return _totalCount > 0 ? _totalCount : null;
   }
