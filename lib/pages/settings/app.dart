@@ -39,7 +39,7 @@ class _AppSettingsState extends State<AppSettings> {
         _CallbackSetting(
           title: "Set New Storage Path".tl,
           subtitle:
-              "Choose an empty folder. Finish or cancel queued downloads before moving."
+              "Choose a folder. An empty folder is copied into; a folder that already holds downloads becomes the local path in place."
                   .tl,
           actionTitle: "Set".tl,
           callback: () async {
@@ -68,12 +68,26 @@ class _AppSettingsState extends State<AppSettings> {
             );
             try {
               final res = await ImportComic.withLibraryLock(
-                () => LocalManager().setNewPath(result!),
+                () => LocalManager().changeStoragePath(result!),
               );
-              if (res != null) loadingDialog.fail(res);
+              if (!res.success) {
+                loadingDialog.fail(res.errorMessage!);
+                if (!context.mounted) return;
+                context.showMessage(message: res.errorMessage!);
+                return;
+              }
+              final adoption = res.data;
               if (!context.mounted) return;
-              context.showMessage(message: res ?? "Path set successfully".tl);
-              if (res == null) setState(() {});
+              context.showMessage(message: "Path set successfully".tl);
+              setState(() {});
+              if (adoption.conflicts.isNotEmpty) {
+                await context.to(
+                  () => LocalRestoreConflictsPage(
+                    conflicts: adoption.conflicts,
+                    previousRoot: adoption.previousPath,
+                  ),
+                );
+              }
             } catch (error) {
               loadingDialog.fail(error);
               if (context.mounted) {

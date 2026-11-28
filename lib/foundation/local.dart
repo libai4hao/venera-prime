@@ -337,10 +337,14 @@ class LocalManager with ChangeNotifier {
     if (path_utils.isWithin(sourcePath, destinationPath)) {
       return "New storage path cannot be inside the current storage path";
     }
+    if (path_utils.isWithin(destinationPath, sourcePath)) {
+      return 'New storage path cannot contain the current storage path';
+    }
     if (!await newDir.list().isEmpty) {
       return "Directory is not empty";
     }
     _changingPath = true;
+    var copied = false;
     try {
       final oldDirectory = directory;
       await copyDirectoryIsolate(oldDirectory, newDir);
@@ -349,6 +353,7 @@ class LocalManager with ChangeNotifier {
         File(FilePath.join(App.dataPath, 'local_path')),
         newPath,
       );
+      copied = true;
       path = newPath;
       notifyListeners();
       // The new location is committed. A locked old file on Windows must not
@@ -364,11 +369,46 @@ class LocalManager with ChangeNotifier {
       }
       return null;
     } catch (e, s) {
+      if (!copied) {
+        // Never leave a half-copied tree behind: a later adoption would
+        // otherwise trust it as a complete copy of the old library.
+        try {
+          await newDir.deleteContents(recursive: true);
+        } catch (cleanupError) {
+          Log.warning(
+            'IO',
+            'Failed to clean up incomplete storage copy: $cleanupError',
+          );
+        }
+      }
       Log.error("IO", e, s);
       return e.toString();
     } finally {
       _changingPath = false;
     }
+  }
+
+  /// Changes the local library root.
+  ///
+  /// An empty target keeps the transactional copy of [setNewPath]; a target
+  /// that already holds downloads is adopted in place by [adoptExistingPath].
+  Future<Res<LocalPathAdoption>> changeStoragePath(String newPath) async {
+    final previousPath = path;
+    final target = Directory(newPath);
+    if (!await target.exists()) {
+      return const Res.error('Directory does not exist');
+    }
+    final entries = await target.list().toList();
+    if (entries.isEmpty) {
+      final error = await setNewPath(newPath);
+      if (error != null) {
+        return Res.error(error);
+      }
+      return Res(
+        LocalPathAdoption(previousPath: previousPath, adoptedPath: path),
+      );
+    }
+    return adoptExistingPath(newPath);
   }
 
   Future<String?> _checkWritableDirectory(Directory directory) async {
