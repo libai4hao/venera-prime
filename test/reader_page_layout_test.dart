@@ -2,6 +2,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:venera/utils/reader_page_layout.dart';
 
 void main() {
+  test('image lookups clamp stale history to the available page range', () {
+    final layout = ReaderPageLayout(
+      imageCount: 3,
+      imagesPerPage: 2,
+      singleCover: false,
+    );
+    expect(layout.pageCount, 2);
+    expect(layout.pageForImage(0), 1);
+    expect(layout.pageForImage(4), 2);
+    expect(layout.pageForImage(100), 2);
+  });
+
   test('wide images break pairs without skipping adjacent pages', () {
     final layout = ReaderPageLayout(
       imageCount: 9,

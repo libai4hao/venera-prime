@@ -19,7 +19,7 @@ class _WaterfallChapter {
 class _WaterfallModeState extends _ContinuousModeState {
   final chapters = <_WaterfallChapter>[];
   final loading = <bool>{};
-  final errors = <bool, String>{};
+  final errors = <bool>{};
   bool restoring = false;
   bool positionScheduled = false;
 
@@ -71,7 +71,7 @@ class _WaterfallModeState extends _ContinuousModeState {
 
   Future<void> loadAdjacent(bool forward) async {
     final number = adjacent(forward);
-    if (number == null || loading.isNotEmpty || errors.containsKey(forward)) {
+    if (number == null || loading.isNotEmpty || errors.contains(forward)) {
       return;
     }
     setState(() => loading.add(forward));
@@ -132,11 +132,12 @@ class _WaterfallModeState extends _ContinuousModeState {
         });
         WidgetsBinding.instance.ensureVisualUpdate();
       });
-    } catch (error) {
+    } catch (error, stack) {
       if (!mounted) return;
+      Log.error('Reader', error, stack);
       setState(() {
         loading.remove(forward);
-        errors[forward] = error.toString();
+        errors.add(forward);
       });
     }
   }
@@ -149,13 +150,13 @@ class _WaterfallModeState extends _ContinuousModeState {
       return Padding(
         padding: const EdgeInsets.all(16),
         child: Center(
-          child: errors.containsKey(forward)
+          child: errors.contains(forward)
               ? TextButton(
                   onPressed: () {
                     errors.remove(forward);
                     loadAdjacent(forward);
                   },
-                  child: Text('${errors[forward]}\n${'Retry'.tl}'),
+                  child: Text('Failed to load. Tap to retry'.tl),
                 )
               : const SizedBox(
                   width: 24,
