@@ -75,9 +75,10 @@ class ReaderPageLayout {
 
   int pageForImage(int image) {
     if (!_hasSpreads) {
-      return image <= firstPageCount
+      final page = image <= firstPageCount
           ? 1
           : 2 + (image - firstPageCount - 1) ~/ imagesPerPage;
+      return page.clamp(1, pageCount);
     }
     // Binary search keeps slider/history lookups cheap in long chapters.
     var low = 0;
@@ -90,7 +91,7 @@ class ReaderPageLayout {
         high = middle;
       }
     }
-    return _spreads.isEmpty ? 1 : (low + 1).clamp(1, _spreads.length);
+    return _spreads.isEmpty ? 1 : (low + 1).clamp(1, pageCount);
   }
 
   int offsetForStart(int start) => start == 0
