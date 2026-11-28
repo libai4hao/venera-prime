@@ -329,11 +329,9 @@ packages:
   flutter_7zip:
     dependency: "direct main"
     description:
-      path: "."
-      ref: b33344797f1d2469339e0e1b75f5f954f1da224c
-      resolved-ref: b33344797f1d2469339e0e1b75f5f954f1da224c
-      url: "https://github.com/venera-app/flutter_7zip"
-    source: git
+      path: "packages/flutter_7zip"
+      relative: true
+    source: path
     version: "0.0.1"
   flutter_driver:
     dependency: transitive
