@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -26,7 +27,7 @@ class ReleaseIdentityTests(unittest.TestCase):
                               env=self.env, check=True, capture_output=True)
 
     def check(self):
-        return subprocess.run(['python3', str(SCRIPT)], cwd=self.directory.name,
+        return subprocess.run([sys.executable, str(SCRIPT)], cwd=self.directory.name,
                               env=self.env, capture_output=True).returncode
 
     def test_bot_with_anonymous_commit(self):
