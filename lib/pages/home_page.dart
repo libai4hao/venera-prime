@@ -31,8 +31,20 @@ import 'local_comics_page.dart';
 import 'read_later_page.dart';
 import 'reading_statistics_page.dart';
 
-bool _compactHome(BuildContext context) =>
-    HomeLayout.fromJson(appdata.settings['homeLayout']).compact;
+Object? _cachedLayoutSource;
+HomeLayout? _cachedHomeLayout;
+
+// Layout parsing is hot in build; reuse it until settings replace the object.
+HomeLayout _homeLayout() {
+  final source = appdata.settings['homeLayout'];
+  if (_cachedHomeLayout == null || !identical(_cachedLayoutSource, source)) {
+    _cachedLayoutSource = source;
+    _cachedHomeLayout = HomeLayout.fromJson(source);
+  }
+  return _cachedHomeLayout!;
+}
+
+bool _compactHome(BuildContext context) => _homeLayout().compact;
 
 // Each preview tile has two pixels of padding above and below its cover.
 double _homeCoverHeight(BuildContext context) =>
@@ -48,7 +60,7 @@ class HomePage extends StatelessWidget {
   );
 
   Widget _buildHome(BuildContext context) {
-    final layout = HomeLayout.fromJson(appdata.settings['homeLayout']);
+    final layout = _homeLayout();
     const modules = <String, Widget>{
       'search': _SearchBar(),
       'sync': _SyncDataWidget(),

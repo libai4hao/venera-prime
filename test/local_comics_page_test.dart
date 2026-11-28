@@ -95,4 +95,38 @@ void main() {
       await fixture.settle(tester);
     },
   );
+
+  testWidgets('selection highlight survives a local library notification', (
+    tester,
+  ) async {
+    await fixture.openReader(tester, 'galleryLeftToRight');
+    await tester.pumpWidget(const SizedBox());
+    await fixture.settle(tester);
+    final local = LocalManager();
+    final comic = local.getComics(LocalSortType.name).single;
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: App.rootNavigatorKey,
+        builder: (context, child) => WindowFrame(child!),
+        home: const LocalComicsPage(),
+      ),
+    );
+    await fixture.settle(tester);
+    await tester.longPress(find.text('Margin test'));
+    await tester.pumpAndSettle();
+
+    Object? selectionColor() {
+      final container = tester.widget<AnimatedContainer>(
+        find.byKey(ValueKey(comic.id)),
+      );
+      return (container.decoration as BoxDecoration?)?.color;
+    }
+
+    expect(selectionColor(), isNotNull);
+    await tester.runAsync(() async => local.add(comic));
+    await tester.pumpAndSettle();
+    expect(selectionColor(), isNotNull);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
 }

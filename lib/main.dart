@@ -120,6 +120,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         setAppLinkNavigationReady(true);
         _tasksVisible.value = _authenticated;
         checkUpdates();
+      } catch (error, stack) {
+        Log.error('Startup', 'Startup sequence failed: $error', stack);
+        if (mounted && _authenticated) {
+          _startupCompleted = true;
+          setAppLinkNavigationReady(true);
+          _tasksVisible.value = true;
+        }
       } finally {
         _startupScheduled = false;
       }

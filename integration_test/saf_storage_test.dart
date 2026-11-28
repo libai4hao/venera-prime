@@ -72,6 +72,17 @@ void main() {
         // A fresh listing is also what the library uses after an application restart.
         expect(listed.lengthSync(), bytes.length);
         expect(listed.readAsBytesSync(), bytes);
+        final specialName = File('${dir.path}/pipe|name.txt')
+          ..writeAsStringSync('safe');
+        expect(
+          dir
+              .listSync()
+              .whereType<File>()
+              .singleWhere((file) => file.path.endsWith('/pipe|name.txt'))
+              .readAsStringSync(),
+          'safe',
+        );
+        specialName.deleteSync();
         final nested = Directory('${dir.path}/nested')..createSync();
         File('${nested.path}/page.jpg').writeAsBytesSync(bytes);
         expect(await dir.size, bytes.length * 2);

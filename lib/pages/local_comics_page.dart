@@ -41,6 +41,14 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
 
   Map<LocalComic, bool> selectedComics = {};
 
+  final _sizeSignatures = <String, String>{};
+
+  String _selectionKey(LocalComic comic) =>
+      '${comic.id}@${comic.comicType.value}';
+
+  String _sizeSignature(LocalComic comic) =>
+      '${comic.chapters?.length}:${comic.downloadedChapters.length}';
+
   void update() {
     if (!mounted) return;
     final placements = LocalManager().library.placements;
@@ -61,23 +69,48 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
         return x == y ? original[a]!.compareTo(original[b]!) : x.compareTo(y);
       });
     }
+    final byKey = <String, LocalComic>{
+      for (final comic in items) _selectionKey(comic): comic,
+    };
+    final rebound = <LocalComic, bool>{};
+    for (final comic in selectedComics.keys) {
+      final current = byKey[_selectionKey(comic)];
+      if (current != null) rebound[current] = true;
+    }
     setState(() {
       comics = items;
-      selectedComics.removeWhere(
-        (c, _) => !items.any((v) => v.id == c.id && v.comicType == c.comicType),
-      );
-      _sizes.clear();
+      selectedComics = rebound;
+      _syncSizeCache(items);
     });
   }
 
-  Future<int> _size(LocalComic comic) async {
-    var bytes = 0;
-    await for (final entity in Directory(
-      comic.baseDir,
-    ).list(recursive: true, followLinks: false)) {
-      if (entity is File) bytes += await entity.length();
+  void _syncSizeCache(List<LocalComic> items) {
+    final present = <String>{};
+    for (final comic in items) {
+      present.add(comic.baseDir);
+      final signature = _sizeSignature(comic);
+      if (_sizeSignatures[comic.baseDir] != signature) {
+        _sizeSignatures[comic.baseDir] = signature;
+        _sizes.remove(comic.baseDir);
+      }
     }
-    return bytes;
+    _sizes.removeWhere((key, _) => !present.contains(key));
+    _sizeSignatures.removeWhere((key, _) => !present.contains(key));
+  }
+
+  Future<int> _size(LocalComic comic) async {
+    try {
+      var bytes = 0;
+      await for (final entity in Directory(
+        comic.baseDir,
+      ).list(recursive: true, followLinks: false)) {
+        if (entity is File) bytes += await entity.length();
+      }
+      return bytes;
+    } catch (e) {
+      Log.warning('Local', 'Failed to measure ${comic.baseDir}: $e');
+      rethrow;
+    }
   }
 
   Future<void> _openComic(LocalComic comic) async {
@@ -197,7 +230,12 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
                   }
                   Navigator.pop(dialogContext);
                   update();
-                } catch (_) {
+                } catch (failure, stack) {
+                  Log.error(
+                    'Local',
+                    'Failed to update folder: $failure',
+                    stack,
+                  );
                   refresh(
                     () => error = 'Use a unique, non-empty folder name'.tl,
                   );

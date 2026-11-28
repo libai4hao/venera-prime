@@ -60,7 +60,12 @@ class Appdata with Init {
     _searchSaveTimer = null;
     if (!_searchProgressDirty) return;
     _searchProgressDirty = false;
-    await saveData();
+    try {
+      await saveData();
+    } catch (_) {
+      _searchProgressDirty = true;
+      rethrow;
+    }
   }
 
   void removeSearchEntry(SearchHistoryEntry entry) {
