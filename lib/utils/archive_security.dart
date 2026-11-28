@@ -9,6 +9,89 @@ import 'package:zip_flutter/zip_flutter.dart' deferred as zip_flutter;
 ///
 /// Extraction always happens into a staging directory. Callers should only
 /// publish that directory after their own validation succeeds.
+class _ArchiveLimitException extends FormatException {
+  const _ArchiveLimitException(super.message);
+}
+
+class _BoundedOutputStream extends archive_pkg.OutputStream {
+  final archive_pkg.OutputStream _output;
+  final int _maxBytes;
+  archive_pkg.Crc32 _crc = archive_pkg.Crc32();
+  int _bytesWritten = 0;
+
+  _BoundedOutputStream(this._output, this._maxBytes)
+    : super(byteOrder: _output.byteOrder);
+
+  int get crc32 => _crc.hash;
+
+  @override
+  bool get isOpen => _output.isOpen;
+
+  @override
+  int get length => _bytesWritten;
+
+  @override
+  void flush() => _output.flush();
+
+  @override
+  Future<void> close() async {
+    await _output.close();
+  }
+
+  @override
+  void closeSync() => _output.closeSync();
+
+  @override
+  void clear() {
+    _output.clear();
+    _bytesWritten = 0;
+    _crc = archive_pkg.Crc32();
+  }
+
+  void _checkWrite(int count) {
+    if (count < 0 || _bytesWritten + count > _maxBytes) {
+      throw const _ArchiveLimitException(
+        'Archive entry expands beyond its declared size',
+      );
+    }
+  }
+
+  @override
+  void writeByte(int value) {
+    _checkWrite(1);
+    _output.writeByte(value);
+    _crc.add([value]);
+    _bytesWritten++;
+  }
+
+  @override
+  void writeBytes(List<int> bytes, {int? length}) {
+    final count = length ?? bytes.length;
+    if (count < 0 || count > bytes.length) {
+      throw const FormatException('Archive entry produced an invalid write');
+    }
+    _checkWrite(count);
+    _output.writeBytes(bytes, length: count);
+    if (count > 0) {
+      _crc.add(count == bytes.length ? bytes : bytes.sublist(0, count));
+    }
+    _bytesWritten += count;
+  }
+
+  @override
+  void writeStream(archive_pkg.InputStream stream) {
+    const chunkSize = 64 * 1024;
+    while (!stream.isEOS) {
+      final count = stream.length < chunkSize ? stream.length : chunkSize;
+      if (count <= 0) break;
+      writeBytes(stream.readBytes(count).toUint8List());
+    }
+  }
+
+  @override
+  Uint8List subset(int start, [int? end]) => _output.subset(start, end);
+}
+
 abstract final class ArchiveSecurity {
   static const maxEntries = 20000;
   static const maxSingleFileBytes = 256 * 1024 * 1024;
@@ -60,6 +143,14 @@ abstract final class ArchiveSecurity {
     }
   }
 
+  static Future<int> _fileCrc32(File file) async {
+    final crc = archive_pkg.Crc32();
+    await for (final chunk in file.openRead()) {
+      crc.add(chunk);
+    }
+    return crc.hash;
+  }
+
   static void _checkExistingPath(String root, String target) {
     var current = target;
     final canonicalRoot = path_utils.canonicalize(root);
@@ -87,6 +178,7 @@ abstract final class ArchiveSecurity {
       final seen = <String>{};
       dynamic nativeArchive;
       final verifiedSizes = <String, int>{};
+      final verifiedCrcs = <String, int>{};
       // Native Venera 1.6 ZIPs have correct central-directory sizes, while
       // archive's lazy entry objects can report zero on every platform.
       // Preflight the directory before decoding content (including symlinks).
@@ -104,6 +196,7 @@ abstract final class ArchiveSecurity {
           throw const FormatException('Archive entry is too large');
         }
         verifiedSizes[entry.filename] = size;
+        verifiedCrcs[entry.filename] = entry.crc32;
         total += size;
       }
       _checkLimits(
@@ -114,6 +207,7 @@ abstract final class ArchiveSecurity {
       stream.position = 0;
       final archive = archive_pkg.ZipDecoder().decodeStream(stream);
       await output.create(recursive: true);
+      var actualTotal = 0;
       try {
         for (var index = 0; index < archive.length; index++) {
           final entry = archive[index];
@@ -132,39 +226,79 @@ abstract final class ArchiveSecurity {
             continue;
           }
           final expectedSize = verifiedSizes[entry.name] ?? entry.size;
-          Uint8List? content;
-          var extractedByNative = false;
-          try {
-            content = entry.readBytes();
-          } catch (_) {
-            content = null;
-          }
-          // zip_flutter creates valid archives whose entries may not be readable
-          // through archive's lazy FileContent implementation on Android.
-          if (content == null || content.length != expectedSize) {
-            await zip_flutter.loadLibrary();
-            nativeArchive ??= zip_flutter.ZipFile.openRead(input.path);
-            // Do not couple two ZIP readers by their entry indexes. Readers
-            // may represent directory or duplicate entries differently.
-            final nativeEntry = nativeArchive.getEntryByName(entry.name);
-            final targetFile = File(target);
-            await targetFile.parent.create(recursive: true);
-            nativeEntry.writeToFile(target);
-            extractedByNative = true;
-            final actualLength = await targetFile.length();
-            if (actualLength != expectedSize) {
-              throw FormatException(
-                'Archive entry size mismatch: expected $expectedSize, got $actualLength',
-              );
-            }
-          }
-          if (extractedByNative) continue;
-          if (content == null || content.length != expectedSize) {
-            throw const FormatException('Archive entry could not be read');
-          }
+          final expectedCrc = verifiedCrcs[entry.name] ?? entry.crc32 ?? 0;
           final targetFile = File(target);
           await targetFile.parent.create(recursive: true);
-          await targetFile.writeAsBytes(content, flush: true);
+          var extractedByNative = false;
+          try {
+            final outputStream = _BoundedOutputStream(
+              archive_pkg.OutputFileStream(target),
+              expectedSize,
+            );
+            try {
+              entry.writeContent(outputStream);
+            } finally {
+              outputStream.closeSync();
+            }
+            if (outputStream.length != expectedSize) {
+              throw FormatException(
+                'Archive entry size mismatch: expected $expectedSize',
+              );
+            }
+            if (outputStream.crc32 != expectedCrc) {
+              throw const FormatException('Archive entry checksum mismatch');
+            }
+          } catch (error) {
+            if (error is _ArchiveLimitException) {
+              if (await targetFile.exists()) await targetFile.delete();
+              rethrow;
+            }
+            if (await targetFile.exists()) await targetFile.delete();
+            await zip_flutter.loadLibrary();
+            nativeArchive ??= zip_flutter.ZipFile.openRead(input.path);
+            // The native fallback reads into a buffer bounded by the verified
+            // central-directory size instead of streaming an unchecked file.
+            final nativeEntry = nativeArchive.getEntryByName(entry.name);
+            if (nativeEntry.size != expectedSize) {
+              throw const FormatException(
+                'Archive entry size mismatch before native extraction',
+              );
+            }
+            final content = nativeEntry.read();
+            if (content.length != expectedSize) {
+              throw const FormatException(
+                'Archive entry size mismatch after native extraction',
+              );
+            }
+            if (archive_pkg.getCrc32(content) != expectedCrc) {
+              throw const FormatException(
+                'Archive entry checksum mismatch after native extraction',
+              );
+            }
+            await targetFile.writeAsBytes(content, flush: true);
+            extractedByNative = true;
+          }
+          if (extractedByNative) {
+            actualTotal += expectedSize;
+            _checkLimits(
+              entries: index + 1,
+              totalBytes: actualTotal,
+              archiveBytes: archiveBytes,
+            );
+            continue;
+          }
+          final actualLength = await targetFile.length();
+          if (actualLength != expectedSize) {
+            throw FormatException(
+              'Archive entry size mismatch: expected $expectedSize, got $actualLength',
+            );
+          }
+          actualTotal += actualLength;
+          _checkLimits(
+            entries: index + 1,
+            totalBytes: actualTotal,
+            archiveBytes: archiveBytes,
+          );
         }
       } finally {
         nativeArchive?.close();
@@ -175,7 +309,12 @@ abstract final class ArchiveSecurity {
   }
 
   static Future<void> extract7z(File input, Directory output) async {
-    final archive = seven_zip.SZArchive.open(input.path);
+    final seven_zip.SZArchive archive;
+    try {
+      archive = seven_zip.SZArchive.open(input.path);
+    } catch (error) {
+      throw FormatException('Failed to open 7z archive: $error');
+    }
     try {
       final root = path_utils.canonicalize(output.path);
       final seen = <String>{};
@@ -200,6 +339,7 @@ abstract final class ArchiveSecurity {
         archiveBytes: archiveBytes,
       );
       await output.create(recursive: true);
+      var actualTotal = 0;
       for (var i = 0; i < archive.numFiles; i++) {
         final entry = archive.getFile(i);
         final target = safeTarget(root, entry.name);
@@ -209,15 +349,31 @@ abstract final class ArchiveSecurity {
           continue;
         }
         await Directory(path_utils.dirname(target)).create(recursive: true);
-        archive.extractToFile(i, target);
-        if (FileSystemEntity.typeSync(target, followLinks: false) ==
-            FileSystemEntityType.link) {
-          throw const FormatException('Archive symlinks are not supported');
+        final targetFile = File(target);
+        try {
+          archive.extractToFile(i, target);
+          if (FileSystemEntity.typeSync(target, followLinks: false) ==
+              FileSystemEntityType.link) {
+            throw const FormatException('Archive symlinks are not supported');
+          }
+          final actualLength = await targetFile.length();
+          if (actualLength != entry.size) {
+            throw const FormatException('Archive entry size mismatch');
+          }
+          if (entry.crc32 != 0 && await _fileCrc32(targetFile) != entry.crc32) {
+            throw const FormatException('Archive entry checksum mismatch');
+          }
+        } catch (error) {
+          if (await targetFile.exists()) await targetFile.delete();
+          if (error is FormatException) rethrow;
+          throw FormatException('Failed to extract 7z entry: $error');
         }
-        final actualLength = await File(target).length();
-        if (actualLength != entry.size) {
-          throw const FormatException('Archive entry size mismatch');
-        }
+        actualTotal += entry.size;
+        _checkLimits(
+          entries: i + 1,
+          totalBytes: actualTotal,
+          archiveBytes: archiveBytes,
+        );
       }
     } finally {
       archive.dispose();
