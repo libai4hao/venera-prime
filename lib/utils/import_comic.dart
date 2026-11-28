@@ -388,6 +388,8 @@ class ImportComic {
     var chapters = <String>[];
     var coverPath = ''; // relative path to the cover image
     var fileList = <String>[];
+    var rootPageCount = 0;
+    var chapterPageCount = 0;
     const imageExtensions = {
       'jpg',
       'jpeg',
@@ -401,6 +403,7 @@ class ImportComic {
     await for (var entry in directory.list()) {
       if (entry is Directory) {
         var chapterHasImages = false;
+        var chapterPages = 0;
         await for (var file in entry.list()) {
           if (file is Directory) {
             Log.info(
@@ -412,15 +415,22 @@ class ImportComic {
           if (file is File &&
               imageExtensions.contains(file.extension.toLowerCase())) {
             chapterHasImages = true;
+            if (!file.name.toLowerCase().startsWith('cover.')) {
+              chapterPages++;
+            }
           }
         }
         if (chapterHasImages) {
           hasChapters = true;
           chapters.add(entry.name);
+          chapterPageCount += chapterPages;
         }
       } else if (entry is File) {
         if (imageExtensions.contains(entry.extension.toLowerCase())) {
           fileList.add(entry.name);
+          if (!entry.name.toLowerCase().startsWith('cover.')) {
+            rootPageCount++;
+          }
         }
       }
     }
@@ -458,6 +468,7 @@ class ImportComic {
       return null;
     }
     var directoryPath = useRelativePath ? directory.name : directory.path;
+    final pageCount = hasChapters ? chapterPageCount : rootPageCount;
     return LocalComic(
       id: id ?? '0',
       title: name,
@@ -471,6 +482,7 @@ class ImportComic {
       comicType: ComicType.local,
       downloadedChapters: chapters,
       createdAt: createTime ?? DateTime.now(),
+      pageCount: pageCount > 0 ? pageCount : null,
     );
   }
 
@@ -553,6 +565,8 @@ class ImportComic {
               downloadedChapters: c.downloadedChapters,
               createdAt: c.createdAt,
               managedByApp: true,
+              language: c.language,
+              pageCount: c.pageCount,
             ),
           );
         }
@@ -612,6 +626,8 @@ class ImportComic {
                   downloadedChapters: comic.downloadedChapters,
                   createdAt: comic.createdAt,
                   managedByApp: managed,
+                  language: comic.language,
+                  pageCount: comic.pageCount,
                 );
           LocalManager().add(toStore, id);
           importedCount++;

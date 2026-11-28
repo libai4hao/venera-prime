@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:venera/components/components.dart';
 import 'package:venera/foundation/app.dart';
@@ -48,6 +50,24 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
 
   String _sizeSignature(LocalComic comic) =>
       '${comic.chapters?.length}:${comic.downloadedChapters.length}';
+
+  ComicTileInfo? _buildTileInfo(LocalComic comic) {
+    final author = comic.subtitle.replaceAll('\n', ' ').trim();
+    final language = comic.language?.trim();
+    final chapterCount = comic.chapters == null
+        ? null
+        : (comic.downloadedChapters.isNotEmpty
+            ? comic.downloadedChapters.length
+            : comic.chapters!.length);
+    // The source and on-disk size already live in the tile footer.
+    final info = ComicTileInfo(
+      author: author.isEmpty ? null : author,
+      language: language == null || language.isEmpty ? null : language,
+      chapterCount: chapterCount,
+      pageCount: comic.pageCount,
+    );
+    return info.isNotEmpty ? info : null;
+  }
 
   void update() {
     if (!mounted) return;
@@ -321,6 +341,7 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
     comics = LocalManager().getComics(sortType);
     update();
     LocalManager().addListener(update);
+    unawaited(LocalManager().fillMissingMetadata());
     super.initState();
   }
 
@@ -687,6 +708,7 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
             },
             comics: comics,
             selections: selectedComics,
+            infoBuilder: (c) => c is LocalComic ? _buildTileInfo(c) : null,
             onLongPressed: (c, heroID) {
               setState(() {
                 multiSelectMode = true;
