@@ -484,7 +484,7 @@ class LocalManager with ChangeNotifier {
     return (int.parse((res.first[0])) + 1).toString();
   }
 
-  Future<void> add(LocalComic comic, [String? id]) async {
+  Future<void> add(LocalComic comic, [String? id, bool notify = true]) async {
     var old = find(id ?? comic.id, comic.comicType);
     // A resumed task may report chapters already present in the database.
     // Merge idempotently so retries never duplicate chapter identifiers.
@@ -518,7 +518,7 @@ class LocalManager with ChangeNotifier {
         comic.managedByApp ? 1 : 0,
       ],
     );
-    notifyListeners();
+    if (notify) notifyListeners();
   }
 
   void remove(String id, ComicType comicType) async {
@@ -680,7 +680,7 @@ class LocalManager with ChangeNotifier {
           managedByApp: existing.managedByApp,
         );
         if (!_sameLocalMetadata(existing, refreshed)) {
-          await add(refreshed);
+          await add(refreshed, null, false);
         }
         continue;
       }
@@ -705,7 +705,7 @@ class LocalManager with ChangeNotifier {
         downloadedChapters: chapters?.ids.toList() ?? const [],
         createdAt: validLocalModifiedTime((await entity.stat()).modified),
       );
-      await add(comic);
+      await add(comic, null, false);
       discovered++;
     }
     for (final comic in known.values) {
@@ -751,7 +751,9 @@ class LocalManager with ChangeNotifier {
             tags: tags,
           );
         }
-      } catch (_) {}
+      } catch (e) {
+        Log.warning('Local', 'Failed to read metadata.json: $e');
+      }
     }
 
     final xmlFile = File(FilePath.join(directory.path, 'ComicInfo.xml'));
@@ -781,7 +783,9 @@ class LocalManager with ChangeNotifier {
           description: nullableText(read('Summary')),
           tags: genres,
         );
-      } catch (_) {}
+      } catch (e) {
+        Log.warning('Local', 'Failed to read ComicInfo.xml: $e');
+      }
     }
     return null;
   }
