@@ -8,6 +8,8 @@ import 'package:venera/foundation/comic_type.dart';
 import 'package:venera/foundation/favorites.dart';
 import 'package:venera/foundation/local.dart';
 import 'package:venera/foundation/log.dart';
+import 'package:venera/foundation/res.dart';
+import 'package:venera/pages/local_restore_conflicts_page.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:path/path.dart' as path_utils;
 import 'package:venera/utils/ext.dart';
@@ -16,6 +18,27 @@ import 'cbz.dart';
 import 'io.dart';
 import 'natural_sort.dart';
 import 'chapter_title_sort.dart';
+
+String _normalizeComicTitle(String title) {
+  return title.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+}
+
+/// Result of adopting an old download directory as the local root.
+class LocalDownloadsRestore {
+  final int imported;
+  final int skipped;
+  final int invalid;
+  final String previousRoot;
+  final List<LocalRestoreConflict> conflicts;
+
+  const LocalDownloadsRestore({
+    this.imported = 0,
+    this.skipped = 0,
+    this.invalid = 0,
+    required this.previousRoot,
+    this.conflicts = const [],
+  });
+}
 
 class ImportComic {
   final String? selectedFolder;
@@ -59,6 +82,185 @@ class ImportComic {
   Future<bool> ehViewer() => _exclusive(_ehViewer);
   Future<bool> directory(bool single) => _exclusive(() => _directory(single));
   Future<bool> localDownloads() => _exclusive(_localDownloads);
+
+  /// Adopts an old download directory picked by the user as the local root.
+  Future<bool> adoptLocalDownloads() => _exclusive(_adoptLocalDownloads);
+
+  Future<bool> _adoptLocalDownloads() async {
+    final picker = DirectoryPicker();
+    final legacyDirectory = await picker.pickDirectory(persistAccess: true);
+    if (legacyDirectory == null) {
+      return false;
+    }
+    final result = await restoreLocalDownloads(legacyDirectory);
+    final data = result.dataOrNull;
+    if (data == null) {
+      return false;
+    }
+    if (data.conflicts.isNotEmpty && App.rootContext.mounted) {
+      await App.rootContext.to(
+        () => LocalRestoreConflictsPage(
+          conflicts: data.conflicts,
+          previousRoot: data.previousRoot,
+        ),
+      );
+    }
+    return true;
+  }
+
+  /// Adopts [legacyDirectory] as the local storage path without copying files
+  /// and imports only comics that are missing from the current library.
+  Future<Res<LocalDownloadsRestore>> restoreLocalDownloads(
+    Directory legacyDirectory, {
+    bool showUi = true,
+  }) async {
+    final previousRoot = LocalManager().path;
+    final legacyRoot = legacyDirectory.path;
+    var cancelled = false;
+    LoadingDialogController? controller;
+    if (showUi) {
+      controller = showLoadingDialog(
+        App.rootContext,
+        allowBackground: true,
+        message: 'Importing'.tl,
+        onCancel: () {
+          cancelled = true;
+        },
+      );
+    }
+
+    try {
+      if (!await legacyDirectory.exists()) {
+        final message = 'Local path not found'.tl;
+        controller?.fail(message);
+        if (showUi) App.rootContext.showMessage(message: message);
+        return Res.error(message);
+      }
+
+      final existing = LocalManager().getComics(LocalSortType.timeDesc);
+      final existingPaths = existing
+          .map((comic) => path_utils.canonicalize(comic.baseDir))
+          .toSet();
+      final existingTitles = existing
+          .map((comic) => _normalizeComicTitle(comic.title))
+          .where((title) => title.isNotEmpty)
+          .toSet();
+      final existingDirectories = existing
+          .map((comic) => path_utils.basename(comic.directory))
+          .toSet();
+      final previousRootCanonical = path_utils.canonicalize(previousRoot);
+      final legacyRootCanonical = path_utils.canonicalize(legacyRoot);
+      final toImport = <LocalComic>[];
+      final conflicts = <LocalRestoreConflict>[];
+      var skipped = 0;
+      var invalid = 0;
+
+      await for (final entry in legacyDirectory.list(followLinks: false)) {
+        if (cancelled) {
+          break;
+        }
+        if (entry is! Directory ||
+            FileSystemEntity.typeSync(entry.path, followLinks: false) ==
+                FileSystemEntityType.link) {
+          continue;
+        }
+        final result = await _checkSingleComic(
+          entry,
+          createTime: (await entry.stat()).modified,
+          useRelativePath: true,
+          checkExistingByName: false,
+          useMetadata: true,
+        );
+        if (result == null) {
+          invalid++;
+          continue;
+        }
+        final title = _normalizeComicTitle(result.title);
+        final canonicalPath = path_utils.canonicalize(entry.path);
+        if (existingPaths.contains(canonicalPath) ||
+            existingTitles.contains(title) ||
+            existingDirectories.contains(entry.name)) {
+          skipped++;
+          continue;
+        }
+        toImport.add(result);
+        if (previousRootCanonical != legacyRootCanonical) {
+          final duplicate = Directory(FilePath.join(previousRoot, entry.name));
+          if (duplicate.existsSync()) {
+            conflicts.add(
+              LocalRestoreConflict(
+                title: result.title,
+                activePath: entry.path,
+                duplicatePath: duplicate.path,
+              ),
+            );
+          }
+        }
+      }
+
+      if (cancelled) {
+        controller?.close();
+        return Res.error('Canceled'.tl);
+      }
+
+      final adoption = await LocalManager().adoptExistingPath(legacyRoot);
+      if (!adoption.success) {
+        final message = adoption.errorMessage ?? 'Failed to change local path'.tl;
+        controller?.fail(message);
+        if (showUi) App.rootContext.showMessage(message: message);
+        return Res.error(message);
+      }
+      for (final conflict in adoption.data.conflicts) {
+        final duplicate = path_utils.canonicalize(conflict.duplicatePath);
+        if (conflicts.any(
+          (item) => path_utils.canonicalize(item.duplicatePath) == duplicate,
+        )) {
+          continue;
+        }
+        conflicts.add(conflict);
+      }
+
+      var imported = 0;
+      if (toImport.isNotEmpty) {
+        final registered = await registerComics(
+          {null: toImport},
+          false,
+          controller: controller,
+          isCancelled: () => cancelled,
+          showUi: false,
+        );
+        if (!registered) {
+          return Res.error('Failed to register comics'.tl);
+        }
+        imported = toImport.length;
+      }
+
+      final message = imported == 0
+          ? 'No new comics found. Storage path updated.'.tl
+          : 'Imported @a comics, skipped @b existing comics'.tlParams({
+              'a': imported,
+              'b': skipped,
+            });
+      controller?.setMessage(message);
+      if (showUi) App.rootContext.showMessage(message: message);
+      return Res(
+        LocalDownloadsRestore(
+          imported: imported,
+          skipped: skipped,
+          invalid: invalid,
+          previousRoot: previousRoot,
+          conflicts: conflicts,
+        ),
+      );
+    } catch (e, s) {
+      controller?.fail(e);
+      Log.error('Import Comic', e.toString(), s);
+      if (showUi) App.rootContext.showMessage(message: e.toString());
+      return Res.error(e.toString());
+    } finally {
+      controller?.close();
+    }
+  }
 
   Future<bool> _cbz() async {
     final file = await selectFile(ext: ['cbz', 'zip', '7z', 'cb7']);
@@ -377,10 +579,15 @@ class ImportComic {
     List<String>? tags,
     DateTime? createTime,
     bool useRelativePath = false,
+    bool checkExistingByName = true,
+    bool useMetadata = false,
   }) async {
     if (!(await directory.exists())) return null;
-    var name = title ?? directory.name;
-    if (LocalManager().findByName(name) != null) {
+    final metadata = useMetadata
+        ? await LocalManager().readLocalMetadata(directory)
+        : null;
+    var name = title ?? metadata?.title ?? directory.name;
+    if (checkExistingByName && LocalManager().findByName(name) != null) {
       Log.info("Import Comic", "Comic already exists: $name");
       return null;
     }
@@ -472,8 +679,9 @@ class ImportComic {
     return LocalComic(
       id: id ?? '0',
       title: name,
-      subtitle: subtitle ?? '',
-      tags: tags ?? [],
+      subtitle: subtitle ?? metadata?.author ?? '',
+      descriptionText: metadata?.description ?? '',
+      tags: tags ?? metadata?.tags ?? [],
       directory: directoryPath,
       chapters: hasChapters
           ? ComicChapters(Map.fromIterables(chapters, chapters))
@@ -482,6 +690,7 @@ class ImportComic {
       comicType: ComicType.local,
       downloadedChapters: chapters,
       createdAt: createTime ?? DateTime.now(),
+      language: metadata?.language,
       pageCount: pageCount > 0 ? pageCount : null,
     );
   }
@@ -585,16 +794,19 @@ class ImportComic {
     bool copy, {
     LoadingDialogController? controller,
     bool Function()? isCancelled,
+    bool showUi = true,
   }) async {
-    controller ??= showLoadingDialog(
-      App.rootContext,
-      allowCancel: false,
-      allowBackground: true,
-      message: 'Importing'.tl,
-    );
+    controller ??= showUi
+        ? showLoadingDialog(
+            App.rootContext,
+            allowCancel: false,
+            allowBackground: true,
+            message: 'Importing'.tl,
+          )
+        : null;
     try {
       if (isCancelled?.call() == true) return false;
-      controller.setProgress(null);
+      controller?.setProgress(null);
       if (copy) {
         importedComics = await _copyComicsToLocalDir(
           importedComics,
@@ -603,8 +815,10 @@ class ImportComic {
       }
       if (isCancelled?.call() == true) return false;
       int importedCount = 0;
+      outer:
       for (var folder in importedComics.keys) {
         for (var comic in importedComics[folder]!) {
+          if (isCancelled?.call() == true) break outer;
           var id = LocalManager().findValidId(ComicType.local);
           final localRoot = path_utils.canonicalize(LocalManager().path);
           final comicPath = path_utils.canonicalize(comic.baseDir);
@@ -648,15 +862,17 @@ class ImportComic {
         }
       }
       final message = "Imported @a comics".tlParams({'a': importedCount});
-      controller.setMessage(message);
-      App.rootContext.showMessage(message: message);
+      controller?.setMessage(message);
+      if (showUi) App.rootContext.showMessage(message: message);
     } catch (e, s) {
-      controller.fail(e);
-      App.rootContext.showMessage(message: "Failed to register comics".tl);
+      controller?.fail(e);
+      if (showUi) {
+        App.rootContext.showMessage(message: "Failed to register comics".tl);
+      }
       Log.error("Import Comic", e.toString(), s);
       return false;
     } finally {
-      controller.close();
+      controller?.close();
     }
     return true;
   }
