@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected vX.Y.Z'; exit 1; }
+          [[ "$RELEASE_TAG" =~ ^m[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected mX.Y.Z'; exit 1; }
           gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" --silent
           if [[ -n "$PUBLISH_BUILD_RUN_ID" ]]; then
             [[ -z "$RETRY_RUN_ID" && "$PUBLISH_BUILD_RUN_ID" =~ ^[0-9]+$ ]]

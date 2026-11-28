@@ -40,7 +40,7 @@ def update_json_file_release(json_file, latest_release, repo_url=REPOSITORY):
     if latest_release.get("draft") or latest_release.get("prerelease"):
         return False
     tag = latest_release["tag_name"]
-    match = re.fullmatch(r"v?(\d+\.\d+\.\d+)", tag)
+    match = re.fullmatch(r"[mv]?(\d+\.\d+\.\d+)", tag)
     if match is None:
         raise ValueError("Release tag is not a stable version")
     version = match.group(1)
