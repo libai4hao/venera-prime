@@ -1,5 +1,10 @@
 {
   "zh_CN": {
+    "Unknown error": "未知错误",
+    "No comics": "暂无漫画",
+    "Chapter": "章节",
+    "This source cannot jump ahead. Showing page @page.": "此来源不支持跳转到后面的页码，已显示第 @page 页。",
+    "Failed to load. Tap to retry": "加载失败，点击重试",
     "Switch to detailed search history": "切换到新版记录（恢复来源、筛选和页码）",
     "Switch to keyword search history": "切换到旧版记录（仅关键词）",
     "Add favorite folder": "添加收藏夹模块",
@@ -755,6 +760,11 @@
     "Read a comic or swipe left to mark its latest chapters as read. Following stays enabled.": "阅读漫画或左滑可标记已看完最新章节，仍保留追更。"
   },
   "zh_TW": {
+    "Unknown error": "未知錯誤",
+    "No comics": "暫無漫畫",
+    "Chapter": "章節",
+    "This source cannot jump ahead. Showing page @page.": "此來源不支援跳轉到後面的頁碼，已顯示第 @page 頁。",
+    "Failed to load. Tap to retry": "載入失敗，點擊重試",
     "Switch to detailed search history": "切換到新版紀錄（恢復來源、篩選和頁碼）",
     "Switch to keyword search history": "切換到舊版紀錄（僅關鍵字）",
     "Restoration cancelled": "已取消恢復",
