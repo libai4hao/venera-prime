@@ -192,7 +192,13 @@ class _SearchResultPageState extends State<SearchResultPage> {
     }
     final keyword = text;
     final selectedOptions = List<String>.of(options);
-    final identity = _entry!.identity;
+    final identity =
+        _entry?.identity ??
+        SearchHistoryEntry(
+          keyword: keyword,
+          sourceKey: sourceKey,
+          options: selectedOptions,
+        ).identity;
     return Scaffold(
       body: SearchResultsList(
         key: ValueKey((text, options.join('\u0000'), sourceKey, _revision)),

@@ -144,6 +144,40 @@ void main() {
       await temp.delete(recursive: true);
     },
   );
+  test('a failed progress save remains pending for the next flush', () async {
+    final temp = await Directory.systemTemp.createTemp('search-retry-');
+    final previousPath = App.dataPath;
+    final snapshot =
+        jsonDecode(jsonEncode(appdata.toJson())) as Map<String, dynamic>;
+    try {
+      final entry = SearchHistoryEntry(
+        keyword: 'comic',
+        sourceKey: 'pica',
+        options: ['new'],
+        page: 4,
+      );
+      appdata.searchRecords = [entry];
+      appdata.updateSearchPage(entry.identity, 2);
+      final blocker = File('${temp.path}/blocked')
+        ..writeAsStringSync('not a directory');
+      App.dataPath = blocker.path;
+      await expectLater(
+        appdata.flushSearchProgress(),
+        throwsA(isA<FileSystemException>()),
+      );
+
+      App.dataPath = temp.path;
+      await appdata.flushSearchProgress();
+      final saved = jsonDecode(
+        await File('${temp.path}/appdata.json').readAsString(),
+      );
+      expect(saved['searchRecords'][0]['page'], 2);
+    } finally {
+      appdata.restoreMemorySnapshot(snapshot);
+      App.dataPath = previousPath;
+      await temp.delete(recursive: true);
+    }
+  });
   test('sync preserves search records omitted by older snapshots', () {
     final snapshot =
         jsonDecode(jsonEncode(appdata.toJson())) as Map<String, dynamic>;

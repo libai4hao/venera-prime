@@ -70,6 +70,53 @@ void main() {
       findsOneWidget,
     );
   });
+  testWidgets('cursor restoration caps replay on an unbounded source', (
+    tester,
+  ) async {
+    final requests = <String?>[];
+    final visible = <int>[];
+    await tester.pumpWidget(
+      host(
+        SearchResultsList(
+          header: const SizedBox(),
+          initialPage: 9,
+          onVisiblePage: visible.add,
+          loadNext: (cursor) async {
+            requests.add(cursor);
+            return Res(<Comic>[], subData: 'cursor-${requests.length}');
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(requests, hasLength(5));
+    expect(visible, [5]);
+    expect(find.textContaining('cannot jump ahead'), findsOneWidget);
+  });
+  testWidgets('continuous cursor loading advances past empty pages', (
+    tester,
+  ) async {
+    appdata.settings['comicListDisplayMode'] = 'continuous';
+    final requests = <String?>[];
+    await tester.pumpWidget(
+      host(
+        SearchResultsList(
+          header: const SizedBox(),
+          onVisiblePage: (_) {},
+          loadNext: (cursor) async {
+            requests.add(cursor);
+            return Res(
+              <Comic>[],
+              subData: requests.length < 4 ? 'cursor-${requests.length}' : null,
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(requests, [null, 'cursor-1', 'cursor-2', 'cursor-3']);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('cursor replay retries failed token without advancing history', (
     tester,
   ) async {
