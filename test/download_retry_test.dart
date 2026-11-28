@@ -38,6 +38,15 @@ class _ListedDirectory implements Directory {
   @override
   bool existsSync() => actual.existsSync();
   @override
+  Future<bool> exists() => actual.exists();
+  @override
+  Stream<FileSystemEntity> list({
+    bool recursive = false,
+    bool followLinks = true,
+  }) => actual
+      .list(recursive: recursive, followLinks: followLinks)
+      .map((e) => e is File ? _ListedFile(e.path) : e);
+  @override
   List<FileSystemEntity> listSync({
     bool recursive = false,
     bool followLinks = true,

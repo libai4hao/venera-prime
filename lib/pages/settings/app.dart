@@ -8,6 +8,55 @@ class AppSettings extends StatefulWidget {
 }
 
 class _AppSettingsState extends State<AppSettings> {
+  Future<void> _cleanAbandonedDownload() async {
+    try {
+      final folders = await LocalManager().abandonedDownloads();
+      if (!mounted) return;
+      if (folders.isEmpty) {
+        context.showMessage(message: 'No abandoned downloads'.tl);
+        return;
+      }
+      final dir = await showDialog<Directory>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: Text('Clean abandoned downloads'.tl),
+          children: [
+            for (final folder in folders)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, folder),
+                child: Text(folder.name),
+              ),
+          ],
+        ),
+      );
+      if (dir == null || !mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Delete folder and all its files?'.tl),
+          content: Text(dir.path),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel'.tl),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text('Delete'.tl),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true) {
+        await ImportComic.withLibraryLock(
+          () => LocalManager().deleteAbandonedDownload(dir),
+        );
+      }
+    } catch (error) {
+      if (mounted) context.showMessage(message: error.toString());
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return SmoothCustomScrollView(
@@ -83,6 +132,11 @@ class _AppSettingsState extends State<AppSettings> {
               loadingDialog.close();
             }
           },
+        ).toSliver(),
+        _CallbackSetting(
+          title: 'Clean abandoned downloads'.tl,
+          actionTitle: 'Select'.tl,
+          callback: _cleanAbandonedDownload,
         ).toSliver(),
         _CallbackSetting(
           title: "Refresh local library".tl,

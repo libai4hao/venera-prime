@@ -187,6 +187,27 @@ void main() {
       expect(reader.chapter, 1);
       expect(reader.history.ep, 1);
       appdata.settings['comicChapterReadingOrder'] = <String, dynamic>{};
+      tester.view.physicalSize = const Size(800, 360);
+      await settle();
+      await tester.tapAt(tester.getRect(find.byType(Reader)).center);
+      await settle();
+      await tester.tap(find.byKey(const Key('reader-page-margin-toggle')));
+      await settle();
+      final panel = find.byKey(const Key('reader-page-margin-controls'));
+      final slider = find.descendant(of: panel, matching: find.byType(Slider));
+      final image = find.byType(ComicImage).first;
+      final width = tester.getSize(image).width;
+      final rect = tester.getRect(slider);
+      final gesture = await tester.startGesture(rect.center);
+      await gesture.moveTo(Offset(rect.right - 15, rect.center.dy));
+      await tester.pump();
+      await tester.pump();
+      expect(tester.getSize(image).width, lessThan(width));
+      expect(tester.getSize(panel).height, 48);
+      await gesture.up();
+      await tester.tapAt(tester.getRect(find.byType(Reader)).center);
+      tester.view.physicalSize = const Size(1000, 1000);
+      await settle();
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(
         MaterialApp(

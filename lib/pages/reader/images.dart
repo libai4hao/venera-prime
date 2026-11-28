@@ -157,7 +157,9 @@ class _ReaderImagesState extends State<_ReaderImages> {
         );
       } else {
         return reader.waterfallEnabled
-            ? const _WaterfallMode()
+            ? _WaterfallMode(
+                pageMargin: readerPageMargin(reader.cid, reader.type.sourceKey),
+              )
             : _ContinuousMode(key: Key(reader.mode.key));
       }
     }
@@ -1268,7 +1270,9 @@ class _ContinuousModeState extends State<_ContinuousMode>
   }
 
   Widget _buildImages(BuildContext context, Size viewport) {
-    final margin = readerPageMargin(reader.cid, reader.type.sourceKey);
+    final margin = this.widget is _WaterfallMode
+        ? (this.widget as _WaterfallMode).pageMargin
+        : readerPageMargin(reader.cid, reader.type.sourceKey);
     final marginEnabled =
         appdata.settings.getReaderSetting(
           reader.cid,

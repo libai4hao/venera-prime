@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -60,6 +61,81 @@ void main() {
     ComicSourceManager().remove(source.key);
     await root.delete(recursive: true);
   });
+
+  for (final matched in [true, false]) {
+    test(
+      'restored cancel checks directory ownership (matched=$matched)',
+      () async {
+        final dir = Directory('${manager.path}/fixture')..createSync();
+        final file = File('${dir.path}/0.jpg')..writeAsBytesSync([1]);
+        final original = ImagesDownloadTask(
+          source: source,
+          comicId: 'fixture',
+          comic: comic(),
+        );
+        File('${dir.path}/.venera_download.json').writeAsStringSync(
+          jsonEncode({
+            'owner': matched ? 'saved' : 'different',
+            'id': 'fixture',
+            'type': original.comicType.value,
+          }),
+        );
+        final restored = ImagesDownloadTask.fromJson({
+          ...original.toJson(),
+          'path': dir.path,
+          'createdDirectory': true,
+          'owner': 'saved',
+        })!;
+        manager.downloadingTasks.add(restored);
+        restored.cancel();
+        for (
+          var i = 0;
+          i < 100 && manager.downloadingTasks.contains(restored);
+          i++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(manager.downloadingTasks, isEmpty);
+        expect(file.existsSync(), !matched);
+      },
+    );
+  }
+
+  test(
+    'cancel after restoring a shared directory removes only owned pages',
+    () async {
+      final dir = Directory('${manager.path}/comic')..createSync();
+      final chapter = Directory('${dir.path}/one')..createSync();
+      final old = File('${chapter.path}/0.png')..writeAsBytesSync([1]);
+      final added = File('${chapter.path}/1.png')..writeAsBytesSync([2]);
+      final marker = File('${dir.path}/.venera_download.json')
+        ..writeAsStringSync('{}');
+      final task = ImagesDownloadTask.fromJson({
+        ...ImagesDownloadTask(
+          source: source,
+          comicId: 'fixture',
+          comic: comic(),
+          chapters: ['one'],
+        ).toJson(),
+        'path': dir.path,
+        'createdFiles': [added.path],
+      })!;
+      manager.downloadingTasks.add(task);
+      expect(await manager.abandonedDownloads(), isEmpty);
+      expect((await manager.refresh()).discovered, 0);
+      task.cancel();
+      for (var i = 0; i < 100 && manager.downloadingTasks.contains(task); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(added.existsSync(), false);
+      expect(old.readAsBytesSync(), [1]);
+      expect(marker.existsSync(), true);
+      expect((await manager.abandonedDownloads()).single.path, dir.path);
+      expect((await manager.refresh()).discovered, 0);
+      await manager.deleteAbandonedDownload(dir);
+      expect(dir.existsSync(), false);
+    },
+  );
 
   test(
     'queue task stays active when paused and cancels through task center',

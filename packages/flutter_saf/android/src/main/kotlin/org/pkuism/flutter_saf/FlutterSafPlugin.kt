@@ -28,6 +28,7 @@ class FlutterSafPlugin: FlutterPlugin, MethodCallHandler, PluginRegistry.Activit
   /// This local reference serves to register the plugin with the Flutter Engine and unregister it
   /// when the Flutter Engine is detached from the Activity
   private lateinit var channel : MethodChannel
+  private lateinit var metadataChannel: MethodChannel
   private lateinit var fileMgr : SAFPathWrapper
   private lateinit var result: Result
   private lateinit var myActivity: Activity
@@ -39,6 +40,18 @@ class FlutterSafPlugin: FlutterPlugin, MethodCallHandler, PluginRegistry.Activit
     fileMgr.init()
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_saf")
     channel.setMethodCallHandler(this)
+    val messenger = flutterPluginBinding.binaryMessenger
+    metadataChannel = MethodChannel(messenger, "flutter_saf/metadata",
+      io.flutter.plugin.common.StandardMethodCodec.INSTANCE, messenger.makeBackgroundTaskQueue())
+    metadataChannel.setMethodCallHandler { call, reply ->
+      if (call.method != "fileSizes") {
+        reply.notImplemented()
+      } else try {
+        reply.success(fileMgr.fileSizes(call.arguments as String))
+      } catch (e: Exception) {
+        reply.error("list_failed", e.message, null)
+      }
+    }
   }
 
   override fun onMethodCall(call: MethodCall, res: Result) {
@@ -59,6 +72,7 @@ class FlutterSafPlugin: FlutterPlugin, MethodCallHandler, PluginRegistry.Activit
   }
 
   override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+    metadataChannel.setMethodCallHandler(null)
     fileMgr.shutdown()
     channel.setMethodCallHandler(null)
   }
@@ -91,7 +105,7 @@ class RefCountUri(val uri: Uri) {
 
 class SAFPathWrapper(private val myContext: Context) {
   val mediaTypePrefix: String = "android://"
-  private val _roots: HashMap<String, Uri> = HashMap()
+  private val _roots: java.util.concurrent.ConcurrentHashMap<String, Uri> = java.util.concurrent.ConcurrentHashMap()
   private val _uriHandles: HashMap<Uri, Int> = HashMap()
   private var nextHandle = 0
   private val _handles: HashMap<Int, RefCountUri> = HashMap()
@@ -139,6 +153,29 @@ class SAFPathWrapper(private val myContext: Context) {
       if (last && create && isFile && getUriMime(current) == DocumentsContract.Document.MIME_TYPE_DIR) return null
     }
     return current
+  }
+
+  // Query size on the child cursor, without reopening every file by path.
+  fun fileSizes(path: String): Map<String, Long> {
+    require(path.startsWith(mediaTypePrefix))
+    val parent = resolve(path.removePrefix(mediaTypePrefix)) ?: return emptyMap()
+    val children = DocumentsContract.buildChildDocumentsUriUsingTree(parent, DocumentsContract.getDocumentId(parent))
+    val sizes = mutableMapOf<String, Long>()
+    val resolver = myContext.contentResolver
+    val cursor = resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE,
+      DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)
+      ?: throw java.io.IOException("Provider did not return children")
+    cursor.use { c ->
+      while (c.moveToNext()) {
+        if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) continue
+        val name = c.getString(0) ?: continue
+        sizes[name] = if (!c.isNull(1)) c.getLong(1) else {
+          val uri = DocumentsContract.buildDocumentUriUsingTree(parent, c.getString(3))
+          resolver.openInputStream(uri)?.use { if (it.read() < 0) 0L else 1L } ?: 0L
+        }
+      }
+    }
+    return sizes
   }
 
   @Keep

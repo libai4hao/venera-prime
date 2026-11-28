@@ -13,7 +13,14 @@ class _ReaderScaffoldState extends State<_ReaderScaffold> {
   bool _isOpen = false;
   bool _showPageMargin = false;
 
-  double get bottomBarHeight => kBottomBarHeight + (_showPageMargin ? 56 : 0);
+  bool get compactLandscape {
+    final size = MediaQuery.sizeOf(context);
+    return size.width >= 520 && size.width > size.height && size.height <= 600;
+  }
+
+  double get bottomBarHeight =>
+      compactLandscape ? 96 : kBottomBarHeight + (_showPageMargin ? 56 : 0);
+  double get topBarHeight => compactLandscape ? 48 : kTopBarHeight;
 
   static const kTopBarHeight = 56.0;
 
@@ -234,10 +241,10 @@ class _ReaderScaffoldState extends State<_ReaderScaffold> {
         ),
         AnimatedPositioned(
           duration: const Duration(milliseconds: 180),
-          top: _isOpen ? 0 : -(kTopBarHeight + context.padding.top),
+          top: _isOpen ? 0 : -(topBarHeight + context.padding.top),
           left: 0,
           right: 0,
-          height: kTopBarHeight + context.padding.top,
+          height: topBarHeight + context.padding.top,
           child: buildTop(),
         ),
         AnimatedPositioned(
@@ -661,10 +668,12 @@ class _ReaderScaffoldState extends State<_ReaderScaffold> {
       height: bottomBarHeight,
       child: Column(
         children: [
-          if (_showPageMargin) buildPageMargin(),
-          const SizedBox(height: 8),
+          if (_showPageMargin && !compactLandscape) buildPageMargin(),
+          if (!compactLandscape) const SizedBox(height: 8),
           Row(
             children: [
+              if (_showPageMargin && compactLandscape)
+                Expanded(child: buildPageMargin()),
               const SizedBox(width: 8),
               IconButton.filledTonal(
                 onPressed: () => !isReversed
@@ -793,7 +802,7 @@ class _ReaderScaffoldState extends State<_ReaderScaffold> {
         true;
     return SizedBox(
       key: const Key('reader-page-margin-controls'),
-      height: 56,
+      height: compactLandscape ? 48 : 56,
       child: Row(
         children: [
           const SizedBox(width: 16),

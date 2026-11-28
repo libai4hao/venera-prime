@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:archive/archive.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/local.dart';
 import 'package:venera/foundation/comic_type.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_saf/flutter_saf.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -29,8 +32,42 @@ void main() {
         final dir = Directory(
           '${root!.path}/prime-regression-${DateTime.now().microsecondsSinceEpoch}',
         )..createSync();
+        // Seed the test provider directly so fixture creation does not dominate
+        // the scan. Only use this shortcut for the integration app's own root.
+        final testTree = base64Url
+            .encode(
+              utf8.encode(
+                'content://com.github.wgh136.venera.prime.integrationtest.testdocs/tree/root',
+              ),
+            )
+            .replaceAll('=', '');
+        if (root.path == 'android://tree:$testTree') {
+          final support = await getApplicationSupportDirectory();
+          final bulk = Directory(
+            '${support.path}/provider-fixture/${dir.name}/bulk',
+          )..createSync();
+          try {
+            for (var i = 0; i < 1327; i++) {
+              File('${bulk.path}/$i.jpg').writeAsBytesSync([1]);
+            }
+            final sizes = await const MethodChannel(
+              'flutter_saf/metadata',
+            ).invokeMapMethod<String, int>('fileSizes', '${dir.path}/bulk');
+            expect(sizes, hasLength(1327));
+            expect(sizes!.values, everyElement(1));
+            debugPrint('Verified SAF listing of 1327 pages');
+          } finally {
+            await bulk.delete(recursive: true);
+          }
+        }
         final file = File('${dir.path}/page.jpg')..writeAsBytesSync(bytes);
         expect(file.readAsBytesSync(), bytes);
+        final empty = dir.joinFile('empty.jpg')..createSync();
+        final sizes = await const MethodChannel(
+          'flutter_saf/metadata',
+        ).invokeMapMethod<String, int>('fileSizes', dir.path);
+        expect(sizes, {'page.jpg': bytes.length, 'empty.jpg': 0});
+        await empty.delete();
         final listed = Directory(dir.path).listSync().whereType<File>().single;
         // A fresh listing is also what the library uses after an application restart.
         expect(listed.lengthSync(), bytes.length);

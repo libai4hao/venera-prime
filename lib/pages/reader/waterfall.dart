@@ -1,7 +1,9 @@
 part of 'reader.dart';
 
 class _WaterfallMode extends _ContinuousMode {
-  const _WaterfallMode();
+  // Rebuild the retained chapter list when the toolbar changes its layout.
+  final double pageMargin;
+  const _WaterfallMode({required this.pageMargin});
 
   @override
   State<_ContinuousMode> createState() => _WaterfallModeState();

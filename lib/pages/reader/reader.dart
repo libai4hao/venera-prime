@@ -580,38 +580,32 @@ class _ReaderState extends State<Reader>
       focusNode: focusNode,
       autofocus: true,
       onKeyEvent: onKeyEvent,
-      child: Overlay(
-        initialEntries: [
-          OverlayEntry(
-            builder: (context) {
-              return Stack(
-                children: [
-                  _ReaderScaffold(
-                    child: _ReaderGestureDetector(
-                      child: _ReaderImages(
-                        key: Key(
-                          waterfallEnabled
-                              ? 'waterfall-$_chapterSession'
-                              : chapter.toString(),
-                        ),
-                      ),
-                    ),
+      child: Overlay.wrap(
+        child: Stack(
+          children: [
+            _ReaderScaffold(
+              child: _ReaderGestureDetector(
+                child: _ReaderImages(
+                  key: Key(
+                    waterfallEnabled
+                        ? 'waterfall-$_chapterSession'
+                        : chapter.toString(),
                   ),
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: AnimatedOpacity(
-                        opacity: _showWhiteRefreshOverlay ? 1 : 0,
-                        duration: const Duration(milliseconds: 40),
-                        curve: Curves.linear,
-                        child: const ColoredBox(color: Colors.white),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ],
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: AnimatedOpacity(
+                  opacity: _showWhiteRefreshOverlay ? 1 : 0,
+                  duration: const Duration(milliseconds: 40),
+                  curve: Curves.linear,
+                  child: const ColoredBox(color: Colors.white),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

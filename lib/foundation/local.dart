@@ -613,6 +613,35 @@ class LocalManager with ChangeNotifier {
     return res.map((row) => LocalComic.fromRow(row)).toList();
   }
 
+  bool _inLibrary(String dir) => getComics(
+    LocalSortType.timeDesc,
+  ).any((comic) => path_utils.equals(comic.baseDir, dir));
+
+  Future<bool> _isAbandoned(Directory dir) async {
+    if (!isManagedPath(dir.path) || !path_utils.equals(dir.parent.path, path)) {
+      return false;
+    }
+    final marker = dir.joinFile('.venera_download.json');
+    if (!await marker.exists()) return false;
+    return !_inLibrary(dir.path) &&
+        !downloadingTasks.any((task) => task.path == dir.path);
+  }
+
+  Future<List<Directory>> abandonedDownloads() async {
+    final result = <Directory>[];
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is Directory && await _isAbandoned(entity)) result.add(entity);
+    }
+    return result;
+  }
+
+  Future<void> deleteAbandonedDownload(Directory dir) async {
+    if (!await _isAbandoned(dir)) {
+      throw StateError('Download directory is in use');
+    }
+    await dir.delete(recursive: true);
+  }
+
   Future<LocalRefreshResult> refresh({bool Function()? isCanceled}) async {
     final root = Directory(path);
     if (!await root.exists()) {
@@ -635,6 +664,7 @@ class LocalManager with ChangeNotifier {
         continue;
       }
       final canonical = path_utils.canonicalize(entity.path);
+      if (await entity.joinFile(".venera_download.json").exists()) continue;
       final existing = known[canonical];
       final imageFiles = await _imageFiles(entity);
       final chapterDirs = <Directory>[];

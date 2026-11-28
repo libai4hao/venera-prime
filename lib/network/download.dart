@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter/widgets.dart' show ChangeNotifier;
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
@@ -207,6 +208,18 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
   String? comicTitle;
 
   bool _createdDownloadDirectory = false;
+  String? _ownerToken;
+  bool _committing = false;
+
+  Future<bool> _matchesDirectoryOwner(Directory dir) async {
+    final file = dir.joinFile(_downloadInfoFileName);
+    if (_ownerToken == null || !await file.exists()) return false;
+    final info = jsonDecode(utf8.decode(await file.readAsBytes()));
+    return info is Map &&
+        info['owner'] == _ownerToken &&
+        info['id'] == id &&
+        info['type'] == comicType.value;
+  }
 
   ImagesDownloadTask({
     required this.source,
@@ -216,63 +229,58 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
     this.comicTitle,
   });
 
+  final _createdFiles = <String>{};
+  bool _cancelled = false;
+
+  Future<void> _recordNewFile(File file) async {
+    if (!_createdDownloadDirectory && !await file.exists()) {
+      if (_createdFiles.add(file.path)) {
+        await LocalManager().saveCurrentDownloadingTasks();
+      }
+    }
+  }
+
   @override
   void cancel() {
+    if (_cancelled || _committing) return;
+    _cancelled = true;
     _requestBackgroundCancellation();
     _isRunning = false;
     stopRecorder();
-    LocalManager().removeTask(this);
-    final downloadPath = path;
-    var local = LocalManager().find(id, comicType);
-    unawaited(
-      Future.sync(() async {
-            await _cancelPendingDownloads();
-            if (downloadPath == null) {
-              return;
-            }
-            if (local == null &&
-                _createdDownloadDirectory &&
-                LocalManager().isManagedPath(downloadPath)) {
-              try {
-                await Directory(downloadPath).delete(recursive: true);
-              } catch (e, s) {
-                _backgroundTask?.addError('Failed to delete directory: $e');
-                Log.error("Download", "Failed to delete directory: $e", s);
-              }
-            } else if (local != null &&
-                local.managedByApp &&
-                chapters != null) {
-              for (var c in chapters!) {
-                var dir = Directory(
-                  FilePath.join(
-                    downloadPath,
-                    LocalManager.getChapterDirectoryName(c),
-                  ),
-                );
-                try {
-                  if (await dir.exists() &&
-                      LocalManager().isManagedPath(dir.path)) {
-                    await dir.delete(recursive: true);
-                  }
-                } catch (e, s) {
-                  _backgroundTask?.addError(
-                    'Failed to delete chapter directory: $e',
-                  );
-                  Log.error(
-                    "Download",
-                    "Failed to delete chapter directory ${dir.path}: $e",
-                    s,
-                  );
-                }
-              }
-            }
-          })
-          .catchError((e, s) {
-            _backgroundTask?.addError('Failed to cancel download cleanup: $e');
-            Log.error("Download", "Failed to cancel download cleanup: $e", s);
-          })
-          .whenComplete(_finishBackgroundCancellation),
-    );
+    unawaited(_cancelAndClean());
+  }
+
+  Future<void> _cancelAndClean() async {
+    try {
+      await _cancelPendingDownloads();
+      await settled;
+      final root = path;
+      final manager = LocalManager();
+      if (root == null || !manager.isManagedPath(root)) return;
+      final dir = Directory(root);
+      if (_createdDownloadDirectory && manager.find(id, comicType) == null) {
+        if (await _matchesDirectoryOwner(dir)) {
+          await dir.delete(recursive: true);
+        }
+      } else {
+        for (final name in _createdFiles) {
+          final file = File(name);
+          if (!manager.isManagedPath(name) ||
+              !(file.parent.path == root || file.parent.parent.path == root)) {
+            continue;
+          }
+          if (await file.exists()) await file.delete();
+        }
+        // Leave an old, unowned partial download marked so refresh skips it.
+        if (manager.find(id, comicType) != null) await _deleteDownloadInfo();
+      }
+    } catch (e, s) {
+      _backgroundTask?.addError('Download cleanup: $e');
+      Log.error('Download', e, s);
+    } finally {
+      LocalManager().removeTask(this);
+      _finishBackgroundCancellation();
+    }
   }
 
   Future<void> _cancelPendingDownloads() async {
@@ -300,15 +308,10 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
     _isRunning = false;
     _message = "Paused";
     _currentSpeed = 0;
-    var shouldMove = <int>[];
     for (var entry in tasks.entries) {
       if (!entry.value.isComplete) {
         entry.value.cancel();
-        shouldMove.add(entry.key);
       }
-    }
-    for (var i in shouldMove) {
-      tasks.remove(i);
     }
     stopRecorder();
     notifyListeners();
@@ -351,75 +354,6 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
 
   static const _downloadInfoFileName = ".venera_download.json";
 
-  bool _isThisTaskInfo(Map<String, dynamic> info) {
-    return info["id"] == comicId && info["type"] == comicType.value;
-  }
-
-  Future<Directory?> _findReusableDirectory() async {
-    if (comic == null) {
-      return null;
-    }
-    var existingLocal = LocalManager().find(comicId, comicType);
-    if (existingLocal != null) {
-      return Directory(
-        FilePath.join(LocalManager().path, existingLocal.directory),
-      );
-    }
-    try {
-      await for (var entity in Directory(LocalManager().path).list()) {
-        if (entity is! Directory) {
-          continue;
-        }
-        var infoFile = entity.joinFile(_downloadInfoFileName);
-        if (!await infoFile.exists()) {
-          continue;
-        }
-        try {
-          var info = jsonDecode(utf8.decode(await infoFile.readAsBytes()));
-          if (info is Map<String, dynamic> && _isThisTaskInfo(info)) {
-            return entity;
-          }
-        } catch (e, s) {
-          Log.error(
-            "Download",
-            "Failed to read download info ${infoFile.path}: $e",
-            s,
-          );
-        }
-      }
-    } catch (e, s) {
-      Log.error("Download", "Failed to find reusable directory: $e", s);
-    }
-
-    try {
-      const comicDirectoryMaxLength = 80;
-      var directoryTitle = comic!.title;
-      if (directoryTitle.length > comicDirectoryMaxLength) {
-        directoryTitle = directoryTitle.substring(0, comicDirectoryMaxLength);
-      }
-      var baseName = sanitizeFileName(directoryTitle);
-      await for (var entity in Directory(LocalManager().path).list()) {
-        if (entity is! Directory) {
-          continue;
-        }
-        var name = entity.name;
-        var mayBePreviousDownload =
-            name == baseName ||
-            (name.startsWith("$baseName(") && name.endsWith(")"));
-        if (mayBePreviousDownload && !await entity.list().isEmpty) {
-          return entity;
-        }
-      }
-    } catch (e, s) {
-      Log.error(
-        "Download",
-        "Failed to find existing download directory: $e",
-        s,
-      );
-    }
-    return null;
-  }
-
   Future<void> _writeDownloadInfo() async {
     if (path == null || comic == null) {
       return;
@@ -430,6 +364,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
         utf8.encode(
           jsonEncode({
             "id": comicId,
+            if (_ownerToken != null) "owner": _ownerToken,
             "type": comicType.value,
             "source": source.key,
             "title": comic!.title,
@@ -438,6 +373,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       );
     } catch (e, s) {
       Log.error("Download", "Failed to write download info: $e", s);
+      rethrow;
     }
   }
 
@@ -493,34 +429,16 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
         0;
   }
 
-  int _countDownloadedPagesOnDisk() {
-    var images = _images;
-    if (path == null || images == null) {
-      return 0;
+  Future<Map<String, Set<int>>> _scanChapters() async {
+    final result = <String, Set<int>>{};
+    for (final entry in _images!.entries) {
+      if (!_isRunning) break;
+      final dir = comic!.chapters == null
+          ? Directory(path!)
+          : _chapterDirectory(entry.key);
+      result[entry.key] = await _downloadedPageIndexes(dir, entry.value.length);
     }
-    var total = 0;
-    if (comic?.chapters == null) {
-      var pages = images[''];
-      if (pages != null) {
-        total += _downloadedPageIndexes(Directory(path!), pages.length).length;
-      }
-      return total;
-    }
-    for (var chapterId in _requestedChapterIds()) {
-      var pages = images[chapterId];
-      if (pages == null) {
-        continue;
-      }
-      total += _downloadedPageIndexes(
-        _chapterDirectory(chapterId),
-        pages.length,
-      ).length;
-    }
-    return total;
-  }
-
-  void _refreshDownloadedCountFromDisk() {
-    _downloadedCount = _countDownloadedPagesOnDisk();
+    return result;
   }
 
   String _formatDownloadProgressMessage() {
@@ -540,87 +458,53 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       saveTo.createSync(recursive: true);
     }
     var file = saveTo.joinFile("$index.png");
+    await _recordNewFile(file);
     await file.writeAsBytes(base64Decode(_skippedImagePlaceholderBase64));
     var errorFile = saveTo.joinFile(".$index.error.txt");
+    await _recordNewFile(errorFile);
     await errorFile.writeAsBytes(utf8.encode(error.toString()));
     _skippedImageCount++;
   }
 
-  Set<int> _downloadedPageIndexes(Directory directory, int expectedCount) {
-    if (!directory.existsSync()) {
-      return const {};
-    }
-    try {
-      var indexes = <int>{};
-      for (var entity in directory.listSync()) {
-        if (entity is! File) {
-          continue;
-        }
-        if (entity.name.startsWith('cover.') || entity.name.startsWith('.')) {
-          continue;
-        }
-        // SAF listing handles use child-query URIs. Reopen the document by
-        // path before querying its size, or valid images can report zero.
-        if (File(entity.path).lengthSync() <= 0) {
-          continue;
-        }
-        var index = int.tryParse(entity.basenameWithoutExt);
-        if (index != null && index >= 0 && index < expectedCount) {
-          // Failed downloads leave a placeholder plus an error marker. Treat
-          // those pages as missing so resume retries them and completion does
-          // not persist an incomplete chapter.
-          if (File(
-            FilePath.join(directory.path, ".$index.error.txt"),
-          ).existsSync()) {
-            continue;
-          }
-          indexes.add(index);
-        }
+  Future<Set<int>> _downloadedPageIndexes(
+    Directory directory,
+    int count,
+  ) async {
+    final indexes = <int>{};
+    final failed = <int>{};
+    void inspect(String name, int size) {
+      final marker = RegExp(r'^\.(\d+)\.error\.txt$').firstMatch(name);
+      if (marker != null) {
+        final index = int.tryParse(marker[1]!);
+        if (index != null) failed.add(index);
+        return;
       }
-      return indexes;
-    } catch (e, s) {
-      Log.error("Download", "Failed to check downloaded files: $e", s);
-      return const {};
-    }
-  }
-
-  bool _hasDownloadedPages(Directory directory, int expectedCount) {
-    if (expectedCount == 0) {
-      return false;
-    }
-    // A placeholder is kept for a failed image so page order remains stable,
-    // but the chapter must not be marked downloaded until that image succeeds.
-    if (directory.existsSync() &&
-        directory.listSync().whereType<File>().any(
-          (file) => file.name.endsWith('.error.txt'),
-        )) {
-      return false;
-    }
-    return _downloadedPageIndexes(directory, expectedCount).length >=
-        expectedCount;
-  }
-
-  List<String> _downloadedChapterIds() {
-    if (comic?.chapters == null || path == null || _images == null) {
-      return [];
-    }
-    var downloadedChapters = <String>[];
-    for (var chapterId in _requestedChapterIds()) {
-      var images = _images![chapterId];
-      if (images == null || images.isEmpty) {
-        continue;
-      }
-      var directory = Directory(
-        FilePath.join(path!, LocalManager.getChapterDirectoryName(chapterId)),
-      );
-      if (_hasDownloadedPages(directory, images.length)) {
-        downloadedChapters.add(chapterId);
+      final dot = name.lastIndexOf('.');
+      final index = int.tryParse(dot < 0 ? name : name.substring(0, dot));
+      if (index != null && index >= 0 && index < count && size > 0) {
+        indexes.add(index);
       }
     }
-    return downloadedChapters;
+
+    if (directory.path.startsWith('android://')) {
+      final sizes = await const MethodChannel(
+        'flutter_saf/metadata',
+      ).invokeMapMethod<String, int>('fileSizes', directory.path);
+      if (sizes == null) throw StateError('Missing SAF directory listing');
+      sizes.forEach(inspect);
+    } else if (await directory.exists()) {
+      await for (final entity in directory.list(followLinks: false)) {
+        if (entity is File) {
+          inspect(entity.name, await File(entity.path).length());
+        }
+      }
+    }
+    return indexes..removeAll(failed);
   }
 
-  String? _downloadCompletionError() {
+  List<String> _verifiedChapters = [];
+
+  String? _downloadCompletionError(Map<String, Set<int>> pagesOnDisk) {
     var images = _images;
     if (images == null || images.isEmpty) {
       return "Error: No image list found";
@@ -633,7 +517,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       if (pages == null || pages.isEmpty) {
         return "Error: Image list is empty";
       }
-      if (!_hasDownloadedPages(Directory(path!), pages.length)) {
+      if (pagesOnDisk['']?.length != pages.length) {
         return "Error: Downloaded images are incomplete";
       }
       return null;
@@ -645,7 +529,10 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
     if (_chapterIdsNeedingImageList().isNotEmpty) {
       return "Error: Image list is incomplete";
     }
-    if (_downloadedChapterIds().length != requestedChapters.length) {
+    _verifiedChapters = requestedChapters
+        .where((id) => pagesOnDisk[id]?.length == images[id]!.length)
+        .toList();
+    if (_verifiedChapters.length != requestedChapters.length) {
       return "Error: Downloaded chapters are incomplete";
     }
     return null;
@@ -659,17 +546,12 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
     return value.toInt().clamp(1, 32);
   }
 
-  void _scheduleTasks([Set<int>? downloadedPages]) {
+  void _scheduleTasks(Set<int> downloadedPages, Directory saveTo) {
     if (!_isRunning || _chapter >= _images!.length) {
       return;
     }
     var images = _images![_images!.keys.elementAt(_chapter)]!;
     var downloading = 0;
-    var saveTo = _currentSaveDirectory();
-    if (!saveTo.existsSync()) {
-      saveTo.createSync(recursive: true);
-    }
-    downloadedPages ??= _downloadedPageIndexes(saveTo, images.length);
     for (var i = _index; i < images.length; i++) {
       if (downloadedPages.contains(i)) {
         continue;
@@ -701,7 +583,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
                 task.isComplete &&
                 scheduledChapter == _chapter &&
                 identical(tasks[i], task)) {
-              _scheduleTasks(downloadedPages);
+              _scheduleTasks(downloadedPages, saveTo);
             }
           })
           .catchError((Object error, StackTrace stack) {
@@ -714,7 +596,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
 
   @override
   void resume() {
-    _runSerialized(_resume, _setError);
+    if (!_cancelled) _runSerialized(_resume, _setError);
   }
 
   Future<void> _resume() async {
@@ -756,21 +638,23 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       }
     }
 
+    final restoringOwnedDirectory = path != null && _createdDownloadDirectory;
     if (path == null) {
       try {
-        var dir =
-            await _findReusableDirectory() ??
-            await LocalManager().findValidDirectory(
-              comicId,
-              comicType,
-              comic!.title,
-            );
+        var dir = await LocalManager().findValidDirectory(
+          comicId,
+          comicType,
+          comic!.title,
+        );
         final existed = await dir.exists();
         if (!existed) {
           await dir.create();
         }
         path = dir.path;
         _createdDownloadDirectory = !existed;
+        if (!existed) {
+          _ownerToken = DateTime.now().microsecondsSinceEpoch.toString();
+        }
       } catch (e, s) {
         Log.error("Download", e.toString(), s);
         _setError("Error: $e");
@@ -783,6 +667,10 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       return;
     }
 
+    if (restoringOwnedDirectory &&
+        !await _matchesDirectoryOwner(Directory(path!))) {
+      throw StateError('Download folder has changed since the task was saved');
+    }
     await _writeDownloadInfo();
     await LocalManager().saveCurrentDownloadingTasks();
 
@@ -804,7 +692,11 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
         }
         var fileType = detectFileType(data);
         var file = File(FilePath.join(path!, "cover${fileType.ext}"));
-        file.writeAsBytesSync(data);
+        if (!_isRunning) throw StateError("Download stopped");
+        if (!await file.exists()) {
+          await _recordNewFile(file);
+          await file.writeAsBytes(data);
+        }
         return "file://${file.path}";
       }, shouldContinue: () => _isRunning);
       if (!_isRunning) {
@@ -887,7 +779,11 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
     } else {
       _refreshTotalCount();
     }
-    _refreshDownloadedCountFromDisk();
+    final scanned = await _scanChapters();
+    _downloadedCount = scanned.values.fold(
+      0,
+      (total, pages) => total + pages.length,
+    );
     _message = _formatDownloadProgressMessage();
     notifyListeners();
 
@@ -899,7 +795,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       if (!saveTo.existsSync()) {
         saveTo.createSync(recursive: true);
       }
-      var downloadedPages = _downloadedPageIndexes(saveTo, images.length);
+      var downloadedPages = scanned[_images!.keys.elementAt(_chapter)]!;
       tasks.clear();
       while (_index < images.length) {
         if (downloadedPages.contains(_index)) {
@@ -908,7 +804,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
           LocalManager().scheduleCurrentDownloadingTasksSave();
           continue;
         }
-        _scheduleTasks(downloadedPages);
+        _scheduleTasks(downloadedPages, saveTo);
         var task = tasks[_index]!;
         await task.wait();
         if (isPaused) {
@@ -936,14 +832,21 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       _chapter++;
     }
 
-    var completionError = _downloadCompletionError();
+    final verified = await _scanChapters();
+    if (!_isRunning) return;
+    var completionError = _downloadCompletionError(verified);
     if (completionError != null) {
       _setError(completionError);
       return;
     }
 
-    await _deleteDownloadInfo();
-    await LocalManager().completeTask(this);
+    _committing = true;
+    try {
+      await LocalManager().completeTask(this);
+      await _deleteDownloadInfo();
+    } finally {
+      _committing = false;
+    }
     _isRunning = false;
     stopRecorder();
   }
@@ -977,6 +880,9 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       "comic": comic?.toJson(),
       "chapters": chapters,
       "path": path,
+      "createdDirectory": _createdDownloadDirectory,
+      "owner": _ownerToken,
+      "createdFiles": _createdFiles.toList(),
       "cover": _cover,
       "images": _images,
       "downloadedCount": _downloadedCount,
@@ -1011,6 +917,12 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
         chapters: ListOrNull.from(json["chapters"]),
       )
       ..path = DownloadTask.restoreManagedPath(json["path"])
+      .._ownerToken = json["owner"] as String?
+      .._createdDownloadDirectory =
+          json["createdDirectory"] == true && json["owner"] != null
+      .._createdFiles.addAll(
+        List<String>.from(json["createdFiles"] ?? const []),
+      )
       .._cover = json["cover"]
       .._images = images
       .._downloadedCount = json["downloadedCount"]
@@ -1039,7 +951,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       chapters: comic!.chapters,
       cover: File(_cover!.split("file://").last).name,
       comicType: ComicType(source.key.hashCode),
-      downloadedChapters: _downloadedChapterIds(),
+      downloadedChapters: _verifiedChapters,
       createdAt: DateTime.now(),
     );
   }
@@ -1149,7 +1061,9 @@ class _ImageDownloadWrapper {
         if (p.imageBytes != null) {
           var fileType = detectFileType(p.imageBytes!);
           var file = saveTo.joinFile("$index${fileType.ext}");
-          var pendingWrite = writeDownloadedPage(file, index, p.imageBytes!);
+          var pendingWrite = task
+              ._recordNewFile(file)
+              .then((_) => writeDownloadedPage(file, index, p.imageBytes!));
           _pendingWrite = pendingWrite;
           try {
             await pendingWrite;
@@ -1182,7 +1096,9 @@ class _ImageDownloadWrapper {
         return;
       }
       try {
-        await task._writeSkippedImagePlaceholder(saveTo, index, e);
+        _pendingWrite = task._writeSkippedImagePlaceholder(saveTo, index, e);
+        await _pendingWrite;
+        _pendingWrite = null;
         skippedError = e.toString();
         isComplete = true;
       } catch (writeError, stackTrace) {
