@@ -796,7 +796,9 @@
     "Rename all": "全部重命名",
     "Delete all": "全部删除",
     "All duplicate copies are resolved.": "所有重复副本已处理完毕。",
-    "Done": "完成"
+    "Done": "完成",
+    "Choose a folder. An empty folder is copied into; a folder that already holds downloads becomes the local path in place.": "选择一个目录。空目录会把本地库复制进去；已有下载内容的目录会直接作为本地存储路径。",
+    "New storage path cannot contain the current storage path": "新存储路径不能包含当前存储路径"
   },
   "zh_TW": {
     "Clean abandoned downloads": "清理已放棄的下載",
@@ -1585,6 +1587,8 @@
     "Rename all": "全部重新命名",
     "Delete all": "全部刪除",
     "All duplicate copies are resolved.": "所有重複副本已處理完畢。",
-    "Done": "完成"
+    "Done": "完成",
+    "Choose a folder. An empty folder is copied into; a folder that already holds downloads becomes the local path in place.": "選擇一個目錄。空目錄會將本機媒體庫複製進去；已有下載內容的目錄會直接作為本機儲存路徑。",
+    "New storage path cannot contain the current storage path": "新儲存路徑不能包含目前儲存路徑"
   }
 }
