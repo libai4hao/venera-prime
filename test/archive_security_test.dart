@@ -48,6 +48,34 @@ void main() {
     },
   );
 
+  test(
+    'rejects a forged ZIP size while decompression is still bounded',
+    () async {
+      final root = await Directory.systemTemp.createTemp('forged-size-zip-');
+      try {
+        final archive = Archive()
+          ..addFile(ArchiveFile.bytes('page.txt', [1, 2, 3]));
+        final bytes = Uint8List.fromList(ZipEncoder().encodeBytes(archive));
+        final view = ByteData.sublistView(bytes);
+        final end = bytes.length - 22;
+        final central = view.getUint32(end + 16, Endian.little);
+        final local = view.getUint32(central + 42, Endian.little);
+        view.setUint32(central + 24, 1, Endian.little);
+        view.setUint32(local + 22, 1, Endian.little);
+        final input = File('${root.path}/forged.zip')..writeAsBytesSync(bytes);
+        final output = Directory('${root.path}/out');
+
+        await expectLater(
+          ArchiveSecurity.extractZip(input, output),
+          throwsA(isA<FormatException>()),
+        );
+        expect(File('${output.path}/page.txt').existsSync(), isFalse);
+      } finally {
+        await root.delete(recursive: true);
+      }
+    },
+  );
+
   test('rejects unsafe ZIP entry names', () async {
     final directory = await Directory.systemTemp.createTemp('venera-archive-');
     for (final name in ['../escape.txt', '/absolute.txt', r'C:\absolute.txt']) {
