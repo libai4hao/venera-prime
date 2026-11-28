@@ -954,6 +954,8 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
       "Select a directory which contains multiple archive files.".tl,
       "Select an EhViewer database and a download folder.".tl,
       "Scan the current local path and restore the local database.".tl,
+      "Choose the old version download directory. It becomes the local storage path without copying files; only comics missing from the library are imported."
+          .tl,
     ][type];
     List<String> importMethods = [
       "Single Comic".tl,
@@ -962,6 +964,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
       "Multiple archive files".tl,
       "EhViewer downloads".tl,
       "Restore local downloads".tl,
+      "Adopt old download directory".tl,
     ];
 
     return ContentDialog(
@@ -978,7 +981,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
               onChanged: (value) {
                 setState(() {
                   type = value ?? type;
-                  if (type == 5) {
+                  if (type >= 5) {
                     selectedFolder = null;
                   }
                 });
@@ -994,7 +997,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
                       value: index,
                     );
                   }),
-                  if (type != 4 && type != 5)
+                  if (type != 4 && type != 5 && type != 6)
                     ListTile(
                       title: Text("Add to favorites".tl),
                       trailing: Select(
@@ -1012,7 +1015,8 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
                       !App.isMacOS &&
                       type != 2 &&
                       type != 3 &&
-                      type != 5)
+                      type != 5 &&
+                      type != 6)
                     CheckboxListTile(
                       enabled: true,
                       title: Text("Copy to app local path".tl),
@@ -1073,6 +1077,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
       3 => await importer.multipleCbz(),
       4 => await importer.ehViewer(),
       5 => await importer.localDownloads(),
+      6 => await importer.adoptLocalDownloads(),
       int() => true,
     };
     if (!mounted) return;

@@ -24,6 +24,7 @@ import 'package:venera/utils/atomic_file.dart';
 import 'local_library.dart';
 import 'app.dart';
 import 'history.dart';
+import 'res.dart';
 
 String? _nonEmptyLanguage(Object? value) {
   if (value is! String) return null;
@@ -234,20 +235,55 @@ class LocalComic with HistoryMixin implements Comic {
   double? get stars => null;
 }
 
-class _LocalMetadata {
+class LocalMetadata {
   final String? title;
   final String? author;
   final String? description;
   final List<String>? tags;
   final String? language;
 
-  const _LocalMetadata({
+  const LocalMetadata({
     this.title,
     this.author,
     this.description,
     this.tags,
     this.language,
   });
+}
+
+/// A directory that exists in both the old local path and the newly adopted
+/// download directory.
+class LocalRestoreConflict {
+  final String title;
+  final String activePath;
+  final String duplicatePath;
+
+  const LocalRestoreConflict({
+    required this.title,
+    required this.activePath,
+    required this.duplicatePath,
+  });
+}
+
+/// Outcome of adopting an existing directory as the local library root.
+class LocalPathAdoption {
+  final String previousPath;
+  final String adoptedPath;
+  final List<LocalRestoreConflict> conflicts;
+
+  const LocalPathAdoption({
+    required this.previousPath,
+    required this.adoptedPath,
+    this.conflicts = const [],
+  });
+}
+
+class _DirectoryUpdate {
+  final String id;
+  final ComicType comicType;
+  final String directory;
+
+  const _DirectoryUpdate(this.id, this.comicType, this.directory);
 }
 
 class LocalManager with ChangeNotifier {
@@ -332,6 +368,200 @@ class LocalManager with ChangeNotifier {
       return e.toString();
     } finally {
       _changingPath = false;
+    }
+  }
+
+  Future<String?> _checkWritableDirectory(Directory directory) async {
+    final probe = File(
+      FilePath.join(
+        directory.path,
+        '.venera_write_test_${DateTime.now().microsecondsSinceEpoch}',
+      ),
+    );
+    try {
+      await probe.writeAsString('');
+      await probe.delete();
+      return null;
+    } catch (e) {
+      probe.deleteIgnoreError();
+      return 'Selected directory is not writable: @error'.tlParams({
+        'error': e.toString(),
+      });
+    }
+  }
+
+  bool _hasComicAtPath(String candidate) {
+    final target = path_utils.canonicalize(candidate);
+    return getComics(
+      LocalSortType.timeDesc,
+    ).any((comic) => path_utils.canonicalize(comic.baseDir) == target);
+  }
+
+  /// Switches the local library root to an existing directory without copying
+  /// or deleting any files.
+  ///
+  /// Relative entries keep pointing at the new root. Entries that only exist
+  /// under the previous root are rewritten to absolute paths and marked as
+  /// unmanaged so they remain readable but are never deleted by the library.
+  Future<Res<LocalPathAdoption>> adoptExistingPath(String newPath) async {
+    if (_changingPath) {
+      return const Res.error('Storage path change already in progress');
+    }
+    if (path.startsWith('android://') || newPath.startsWith('android://')) {
+      return const Res.error(
+        'Adopting an existing directory is not supported while storage uses SAF',
+      );
+    }
+    final newDir = Directory(newPath);
+    if (!await newDir.exists()) {
+      return const Res.error('Directory does not exist');
+    }
+    final sourcePath = path_utils.canonicalize(path);
+    final destinationPath = path_utils.canonicalize(newPath);
+    final previousPath = path;
+    if (sourcePath == destinationPath) {
+      return Res(
+        LocalPathAdoption(previousPath: previousPath, adoptedPath: path),
+      );
+    }
+    if (downloadingTasks.isNotEmpty) {
+      return const Res.error(
+        'Please finish or cancel downloads before changing the storage path',
+      );
+    }
+    if (path_utils.isWithin(sourcePath, destinationPath) ||
+        path_utils.isWithin(destinationPath, sourcePath)) {
+      return const Res.error(
+        'The selected directory cannot be inside the current local path, or contain it',
+      );
+    }
+    final writableError = await _checkWritableDirectory(newDir);
+    if (writableError != null) {
+      return Res.error(writableError);
+    }
+
+    final conflicts = <LocalRestoreConflict>[];
+    final updates = <_DirectoryUpdate>[];
+    for (final comic in getComics(LocalSortType.timeDesc)) {
+      var directory = comic.directory;
+      final isRelative = !directory.contains('/') && !directory.contains('\\');
+      if (isRelative) {
+        final oldComicPath = FilePath.join(previousPath, directory);
+        final newComicPath = FilePath.join(newPath, directory);
+        final oldExists = Directory(oldComicPath).existsSync();
+        final newExists = Directory(newComicPath).existsSync();
+        if (oldExists && newExists) {
+          conflicts.add(
+            LocalRestoreConflict(
+              title: comic.title,
+              activePath: newComicPath,
+              duplicatePath: oldComicPath,
+            ),
+          );
+        } else if (oldExists && !newExists) {
+          directory = oldComicPath;
+        }
+      }
+      updates.add(_DirectoryUpdate(comic.id, comic.comicType, directory));
+    }
+
+    _changingPath = true;
+    try {
+      path = newPath;
+      await _persistPath();
+      _checkNoMedia();
+      _db.execute('BEGIN;');
+      try {
+        for (final update in updates) {
+          final baseDir =
+              update.directory.contains('/') || update.directory.contains('\\')
+              ? update.directory
+              : FilePath.join(newPath, update.directory);
+          final managed = _isManagedPath(baseDir);
+          _db.execute(
+            'UPDATE comics SET directory = ?, managed_by_app = ? '
+            'WHERE id = ? AND comic_type = ?;',
+            [
+              update.directory,
+              managed ? 1 : 0,
+              update.id,
+              update.comicType.value,
+            ],
+          );
+        }
+        _db.execute('COMMIT;');
+      } catch (_) {
+        _db.execute('ROLLBACK;');
+        rethrow;
+      }
+      _metadataBackfillAttempted = false;
+      notifyListeners();
+      return Res(
+        LocalPathAdoption(
+          previousPath: previousPath,
+          adoptedPath: newPath,
+          conflicts: conflicts,
+        ),
+      );
+    } catch (e, s) {
+      path = previousPath;
+      try {
+        await _persistPath();
+      } catch (_) {}
+      Log.error('Local', 'Failed to adopt local path: $e', s);
+      return Res.error(e.toString());
+    } finally {
+      _changingPath = false;
+    }
+  }
+
+  Future<String?> deleteLegacyDuplicate(
+    String duplicatePath,
+    String previousRoot,
+  ) async {
+    if (!_isSafeSubdirectory(previousRoot, duplicatePath)) {
+      return 'Refusing to delete a directory outside the old local path'.tl;
+    }
+    if (!await Directory(duplicatePath).exists()) {
+      return 'Directory not found'.tl;
+    }
+    if (_hasComicAtPath(duplicatePath)) {
+      return 'A library entry still references this directory'.tl;
+    }
+    try {
+      await overrideIO(() => Directory(duplicatePath).delete(recursive: true));
+      return null;
+    } catch (e, s) {
+      Log.error('Local', 'Failed to delete duplicate copy: $e', s);
+      return e.toString();
+    }
+  }
+
+  Future<String?> renameLegacyDuplicate(
+    String duplicatePath,
+    String previousRoot,
+  ) async {
+    if (!_isSafeSubdirectory(previousRoot, duplicatePath)) {
+      return 'Refusing to rename a directory outside the old local path'.tl;
+    }
+    final directory = Directory(duplicatePath);
+    if (!await directory.exists()) {
+      return 'Directory not found'.tl;
+    }
+    if (_hasComicAtPath(duplicatePath)) {
+      return 'A library entry still references this directory'.tl;
+    }
+    final newName = findValidDirectoryName(
+      previousRoot,
+      '${directory.name} (old copy)',
+    );
+    final target = FilePath.join(previousRoot, newName);
+    try {
+      await overrideIO(() => directory.rename(target));
+      return null;
+    } catch (e, s) {
+      Log.error('Local', 'Failed to rename duplicate copy: $e', s);
+      return e.toString();
     }
   }
 
@@ -856,7 +1086,11 @@ class LocalManager with ChangeNotifier {
     }
   }
 
-  Future<_LocalMetadata?> _readLocalMetadata(Directory directory) async {
+  /// Reads metadata.json or ComicInfo.xml from a local comic directory.
+  Future<LocalMetadata?> readLocalMetadata(Directory directory) =>
+      _readLocalMetadata(directory);
+
+  Future<LocalMetadata?> _readLocalMetadata(Directory directory) async {
     final jsonFile = File(FilePath.join(directory.path, 'metadata.json'));
     if (await jsonFile.exists()) {
       try {
@@ -885,7 +1119,7 @@ class LocalManager with ChangeNotifier {
                 .take(256)
                 .toList();
           }
-          return _LocalMetadata(
+          return LocalMetadata(
             title: text('title') ?? text('Title'),
             author: text('author') ?? text('Author'),
             description: text('description') ?? text('summary'),
@@ -919,7 +1153,7 @@ class LocalManager with ChangeNotifier {
             .where((value) => value.isNotEmpty)
             .take(256)
             .toList();
-        return _LocalMetadata(
+        return LocalMetadata(
           title: nullableText(read('Title')),
           author:
               (nullableText(read('Writer')) ?? nullableText(read('Penciller'))),
@@ -1520,7 +1754,13 @@ class LocalManager with ChangeNotifier {
 
   bool _isManagedPath(String candidate) {
     if (path.startsWith('android://')) return _isSafChild(path, candidate);
-    final root = path_utils.canonicalize(path);
+    return _isSafeSubdirectory(path, candidate);
+  }
+
+  /// Whether [candidate] is a strict subdirectory of [rootPath] without any
+  /// symlinked path component.
+  bool _isSafeSubdirectory(String rootPath, String candidate) {
+    final root = path_utils.canonicalize(rootPath);
     final target = path_utils.canonicalize(candidate);
     if (target == root || !path_utils.isWithin(root, target)) return false;
 
